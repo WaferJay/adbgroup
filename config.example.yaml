@@ -1,0 +1,31 @@
+backend:
+  binary: /usr/local/bin/adb
+  address: 127.0.0.1:5038
+  manage: true
+
+api:
+  listen: 0.0.0.0:8443
+  # Omit all three to generate and reuse the local CA/server credentials.
+  # For external PKI, set all three explicitly:
+  # certificate: pki/server.pem
+  # key: pki/server.key
+  # client_ca: pki/client-ca.pem
+
+pki:
+  directory: run/pki
+  # Add public/NAT DNS names or IPs before the first initialization.
+  server_names: [adb-host.example]
+
+read_wait_seconds: 30
+read_queue_limit: 128
+
+groups:
+  - name: team-a
+    devices: [USB_SERIAL_A, USB_SERIAL_SHARED]
+  - name: team-b
+    devices: [USB_SERIAL_B, USB_SERIAL_SHARED]
+
+# Exact URI SAN from the client's verified mTLS certificate (one URI per certificate).
+identities:
+  "spiffe://adbgroup/alice": [team-a]
+  "spiffe://adbgroup/bob": [team-b]
