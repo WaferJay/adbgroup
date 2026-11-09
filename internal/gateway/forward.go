@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,19 +37,25 @@ type rule struct {
 	local, remote string
 	listener      net.Listener
 	reverse       bool
-	cleanup       sync.Once
+	retiring      atomic.Bool
+	cleanup       atomic.Bool
+	retryAt       atomic.Int64
+}
+type ruleOperation struct {
+	mu   sync.Mutex
+	refs int
 }
 type ForwardManager struct {
 	mu     sync.Mutex
 	g      *Gateway
 	rules  map[string]*rule
 	peers  map[string]Peer
-	ops    sync.Map
+	ops    map[string]*ruleOperation
 	Listen func(string, string) (net.Listener, error)
 }
 
 func NewForwardManager(g *Gateway) *ForwardManager {
-	return &ForwardManager{g: g, rules: map[string]*rule{}, peers: map[string]Peer{}, Listen: net.Listen}
+	return &ForwardManager{g: g, rules: map[string]*rule{}, peers: map[string]Peer{}, ops: map[string]*ruleOperation{}, Listen: net.Listen}
 }
 func tcpPort(s string, zero bool) (int, error) {
 	if !strings.HasPrefix(s, "tcp:") {
@@ -77,10 +84,24 @@ func (f *ForwardManager) reverseKey(d Device, local string) string {
 	return "r/" + d.Serial + "/" + local
 }
 func (f *ForwardManager) operation(key string) func() {
-	v, _ := f.ops.LoadOrStore(key, &sync.Mutex{})
-	m := v.(*sync.Mutex)
-	m.Lock()
-	return m.Unlock
+	f.mu.Lock()
+	op := f.ops[key]
+	if op == nil {
+		op = &ruleOperation{}
+		f.ops[key] = op
+	}
+	op.refs++
+	f.mu.Unlock()
+	op.mu.Lock()
+	return func() {
+		op.mu.Unlock()
+		f.mu.Lock()
+		op.refs--
+		if op.refs == 0 {
+			delete(f.ops, key)
+		}
+		f.mu.Unlock()
+	}
 }
 func (f *ForwardManager) Attach(id string, p Peer) { f.mu.Lock(); f.peers[id] = p; f.mu.Unlock() }
 func (f *ForwardManager) peer(s Scope) Peer {
@@ -105,7 +126,7 @@ func (f *ForwardManager) find(key string) *rule {
 func (f *ForwardManager) List(c io.Writer, s Scope) {
 	var lines []string
 	for _, r := range f.snapshot() {
-		if !r.reverse && r.scope == s {
+		if !r.reverse && r.scope == s && f.valid(r) {
 			lines = append(lines, fmt.Sprintf("%s %s %s\n", r.device.Serial, r.local, r.remote))
 		}
 	}
@@ -136,7 +157,18 @@ func (f *ForwardManager) Forward(ctx context.Context, c io.Writer, s Scope, d De
 		return
 	}
 	local = "tcp:" + strconv.Itoa(port)
-	old := f.find(f.key(s, local))
+	key := f.key(s, local)
+	old := f.find(key)
+	if old != nil && !f.valid(old) {
+		// A disconnected device's rule is gone even when its asynchronous
+		// cleanup has not run yet. Finish removing its client listener before
+		// binding a fresh one, including for --no-rebind and a new device.
+		if err := f.removeForward(ctx, key, old); err != nil {
+			fail(c, err)
+			return
+		}
+		old = nil
+	}
 	if old != nil && (no || old.device.Serial != d.Serial) {
 		fail(c, errors.New("cannot rebind socket"))
 		return
@@ -162,7 +194,7 @@ func (f *ForwardManager) Forward(ctx context.Context, c io.Writer, s Scope, d De
 		return
 	}
 	r.local = "tcp:" + strconv.Itoa(reply.Port)
-	key := f.key(s, r.local)
+	key = f.key(s, r.local)
 	f.mu.Lock()
 	live := f.peers[s.Tunnel] != nil
 	if live {
@@ -208,7 +240,10 @@ func (f *ForwardManager) Remove(c io.Writer, s Scope, d Device, local string) {
 		fail(c, errors.New("forward not found"))
 		return
 	}
-	f.removeRule(context.Background(), key, r)
+	if err := f.removeForward(context.Background(), key, r); err != nil {
+		fail(c, err)
+		return
+	}
 	okay(c)
 	okay(c)
 }
@@ -226,6 +261,9 @@ func (f *ForwardManager) RemoveAll(ctx context.Context, c io.Writer, s Scope, se
 				fail(c, errors.New("connection required"))
 				return
 			}
+			if p, ok := closer.(*pumpConn); ok {
+				closer = p.accessCloser()
+			}
 			wait, cancel := context.WithTimeout(ctx, f.g.Engine.Config().ReadWait())
 			var err error
 			release, err = f.g.Engine.Acquire(wait, s, r.device, closer)
@@ -235,51 +273,105 @@ func (f *ForwardManager) RemoveAll(ctx context.Context, c io.Writer, s Scope, se
 				return
 			}
 		}
-		f.removeRule(ctx, f.key(s, r.local), r)
+		err := f.removeForward(ctx, f.key(s, r.local), r)
 		if release != nil {
 			release()
+		}
+		if err != nil {
+			fail(c, err)
+			return
 		}
 	}
 	okay(c)
 	okay(c)
 }
-func (f *ForwardManager) removeRule(ctx context.Context, key string, r *rule) {
+func (f *ForwardManager) removeRule(ctx context.Context, key string, r *rule) error {
 	if r.reverse {
 		unlock := f.operation("r/" + r.device.Serial)
 		defer unlock()
-		f.removeReverse(ctx, key, r)
-		return
+		return f.removeReverse(ctx, key, r)
 	}
+	unlock := f.operation("f/" + r.scope.Tunnel)
+	defer unlock()
+	return f.removeForward(ctx, key, r)
+}
+
+// The caller holds the tunnel operation lock through the client's reply, so
+// background cleanup cannot close a listener being rebound by Forward.
+func (f *ForwardManager) removeForward(ctx context.Context, key string, r *rule) error {
 	f.mu.Lock()
 	if f.rules[key] != r {
 		f.mu.Unlock()
-		return
+		return nil
 	}
 	delete(f.rules, key)
 	p := f.peers[r.scope.Tunnel]
 	f.mu.Unlock()
 	if p != nil {
-		p.Request(ctx, Control{Op: "remove", Rule: r.id})
+		_, err := p.Request(ctx, Control{Op: "remove", Rule: r.id})
+		return err
 	}
+	return nil
 }
-func (f *ForwardManager) removeReverse(ctx context.Context, key string, r *rule) {
+func (f *ForwardManager) removeReverse(ctx context.Context, key string, r *rule) error {
 	f.mu.Lock()
 	if f.rules[key] != r {
 		f.mu.Unlock()
-		return
+		return nil
 	}
-	delete(f.rules, key)
 	f.mu.Unlock()
+	r.retiring.Store(true)
+	// Each rule has a random Unix socket name, never a recycled TCP port. Even
+	// if adbd applies a command but loses its reply, a stale mapping cannot reach
+	// another rule, process or group after this listener is closed.
 	r.listener.Close()
 	if f.g.Engine.DeviceMatches(r.device) {
-		f.reverseCommand(ctx, r.device, "killforward:"+r.local)
+		if _, err := f.reverseCommand(ctx, r.device, "killforward:"+r.local); err != nil {
+			// A lost acknowledgement may mean the listener is already gone. Query
+			// adbd before retrying, without treating an arbitrary FAIL as success.
+			present, queryErr := f.reversePresent(ctx, r)
+			if queryErr != nil || present {
+				r.retryAt.Store(time.Now().Add(time.Second).UnixNano())
+				return fmt.Errorf("remove reverse %s: %w", r.local, err)
+			}
+		}
 	}
+	f.mu.Lock()
+	delete(f.rules, key)
+	f.mu.Unlock()
 	if p := f.peer(r.scope); p != nil {
 		p.Request(ctx, Control{Op: "forget", Rule: r.id})
 	}
+	return nil
+}
+
+func (f *ForwardManager) reversePresent(ctx context.Context, r *rule) (bool, error) {
+	c, err := f.g.Backend.Device(ctx, r.device, "reverse:list-forward")
+	if err != nil {
+		return false, err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	list, err := ReadFrame(c)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(list), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 3 {
+			return false, errors.New("invalid reverse list from backend")
+		}
+		if fields[1] == r.local && fields[2] == "localabstract:adbgroup-"+r.id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 func (f *ForwardManager) valid(r *rule) bool {
-	if !f.g.Engine.AuthorizedScope(r.scope) {
+	if r.retiring.Load() || f.peer(r.scope) == nil || !f.g.Engine.AuthorizedScope(r.scope) {
 		return false
 	}
 	d, err := f.g.Engine.Select(r.scope, r.device.Serial, "", "")
@@ -287,7 +379,7 @@ func (f *ForwardManager) valid(r *rule) bool {
 }
 func (f *ForwardManager) OpenForward(parent context.Context, s Scope, id string, raw net.Conn) error {
 	ctx, c := watch(parent, raw)
-	defer c.Close()
+	defer c.finish()
 	var r *rule
 	for _, v := range f.snapshot() {
 		if !v.reverse && v.id == id && v.scope == s {
@@ -299,7 +391,7 @@ func (f *ForwardManager) OpenForward(parent context.Context, s Scope, id string,
 		return errors.New("forward not found")
 	}
 	wait, cancel := context.WithTimeout(ctx, f.g.Engine.Config().ReadWait())
-	release, err := f.g.Engine.Acquire(wait, s, r.device, c)
+	release, err := f.g.Engine.Acquire(wait, s, r.device, c.accessCloser())
 	cancel()
 	if err != nil {
 		return err
@@ -310,6 +402,7 @@ func (f *ForwardManager) OpenForward(parent context.Context, s Scope, id string,
 	if err != nil {
 		return err
 	}
+	defer up.Close()
 	bridge(c, up)
 	return nil
 }
@@ -334,7 +427,7 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 	if cmd == "list-forward" {
 		var lines []string
 		for _, r := range f.snapshot() {
-			if r.reverse && r.device.Serial == d.Serial {
+			if r.reverse && !r.retiring.Load() && r.device.Serial == d.Serial {
 				lines = append(lines, fmt.Sprintf("host %s %s\n", r.local, r.remote))
 			}
 		}
@@ -354,11 +447,18 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 			local = "tcp:" + strconv.Itoa(n)
 		}
 		found := false
+		var cleanupErr error
 		for _, r := range f.snapshot() {
 			if r.reverse && r.device.Serial == d.Serial && (cmd == "killforward-all" || r.local == local) {
 				found = true
-				f.removeReverse(ctx, f.reverseKey(d, r.local), r)
+				if err := f.removeReverse(ctx, f.reverseKey(d, r.local), r); err != nil && cleanupErr == nil {
+					cleanupErr = err
+				}
 			}
+		}
+		if cleanupErr != nil {
+			fail(c, cleanupErr)
+			return
 		}
 		if !found && cmd != "killforward-all" {
 			fail(c, errors.New("reverse not found"))
@@ -405,7 +505,10 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 		fail(c, err)
 		return
 	}
-	l, err := f.Listen("tcp", "127.0.0.1:0")
+	// Linux abstract Unix sockets avoid filesystem cleanup and, unlike ephemeral
+	// TCP ports, cannot be reused by unrelated rules after a failed ADB operation.
+	name := "adbgroup-" + r.id
+	l, err := f.Listen("unix", "@"+name)
 	if err != nil {
 		p.Request(ctx, Control{Op: "forget", Rule: r.id})
 		fail(c, err)
@@ -416,7 +519,7 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 	if no {
 		prefix += "norebind:"
 	}
-	actual, err := f.reverseCommand(ctx, d, prefix+local+";tcp:"+strconv.Itoa(l.Addr().(*net.TCPAddr).Port))
+	actual, err := f.reverseCommand(ctx, d, prefix+local+";localabstract:"+name)
 	if err != nil {
 		l.Close()
 		p.Request(ctx, Control{Op: "forget", Rule: r.id})
@@ -427,6 +530,7 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 		n, e := strconv.Atoi(actual)
 		if e != nil || n < 1 || n > 65535 {
 			l.Close()
+			p.Request(ctx, Control{Op: "forget", Rule: r.id})
 			fail(c, errors.New("invalid allocated reverse port"))
 			return
 		}
@@ -436,21 +540,20 @@ func (f *ForwardManager) Reverse(ctx context.Context, c io.Writer, s Scope, d De
 	}
 	f.mu.Lock()
 	live := f.peers[s.Tunnel] != nil
-	if live {
-		f.rules[key] = r
-	}
+	f.rules[key] = r
 	f.mu.Unlock()
-	if !live {
-		l.Close()
-		f.reverseCommand(ctx, d, "killforward:"+r.local)
-		fail(c, errors.New("tunnel closed"))
-		return
-	}
 	if old != nil {
 		old.listener.Close()
 		if previous := f.peer(old.scope); previous != nil {
 			previous.Request(ctx, Control{Op: "forget", Rule: old.id})
 		}
+	}
+	if !live {
+		if err := f.removeReverse(context.Background(), key, r); err != nil {
+			slog.Warn("reverse cleanup pending", "device", d.Serial, "error", err)
+		}
+		fail(c, errors.New("tunnel closed"))
+		return
 	}
 	go f.serveReverse(r)
 	okay(c)
@@ -475,18 +578,18 @@ func (f *ForwardManager) reverseData(r *rule, raw net.Conn) {
 		return
 	}
 	ctx, c := watch(p.Context(), raw)
-	defer c.Close()
+	defer c.finish()
 	if !f.valid(r) {
 		return
 	}
 	wait, cancel := context.WithTimeout(ctx, f.g.Engine.Config().ReadWait())
-	release, err := f.g.Engine.Acquire(wait, r.scope, r.device, c)
+	release, err := f.g.Engine.Acquire(wait, r.scope, r.device, c.accessCloser())
 	cancel()
 	if err != nil {
 		return
 	}
 	defer release()
-	if f.find(f.reverseKey(r.device, r.local)) != r {
+	if r.retiring.Load() || f.find(f.reverseKey(r.device, r.local)) != r {
 		return
 	}
 	slog.Info("reverse access", "identity", r.scope.Identity, "group", r.scope.Group, "device", r.device.Serial, "tunnel", r.scope.Tunnel, "lease", r.scope.Lease)
@@ -495,13 +598,13 @@ func (f *ForwardManager) reverseData(r *rule, raw net.Conn) {
 	if err != nil {
 		return
 	}
+	defer up.Close()
 	bridge(c, up)
 }
 func (f *ForwardManager) Drop(id string) {
 	f.mu.Lock()
 	delete(f.peers, id)
 	f.mu.Unlock()
-	f.ops.Delete("f/" + id)
 	for _, r := range f.snapshot() {
 		if r.scope.Tunnel == id {
 			key := f.key(r.scope, r.local)
@@ -521,12 +624,17 @@ func (f *ForwardManager) Sweep(ctx context.Context) {
 			return
 		case <-t.C:
 			for _, r := range f.snapshot() {
-				if !f.valid(r) {
+				if !f.valid(r) && time.Now().UnixNano() >= r.retryAt.Load() && r.cleanup.CompareAndSwap(false, true) {
 					key := f.key(r.scope, r.local)
 					if r.reverse {
 						key = f.reverseKey(r.device, r.local)
 					}
-					r.cleanup.Do(func() { go f.removeRule(ctx, key, r) })
+					go func() {
+						defer r.cleanup.Store(false)
+						if err := f.removeRule(ctx, key, r); err != nil {
+							slog.Warn("forward cleanup pending", "device", r.device.Serial, "error", err)
+						}
+					}()
 				}
 			}
 		}
@@ -549,4 +657,7 @@ func (f *ForwardManager) Close() {
 		}(r)
 	}
 	wg.Wait()
+	f.mu.Lock()
+	f.rules = map[string]*rule{}
+	f.mu.Unlock()
 }

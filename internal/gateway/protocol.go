@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -70,7 +71,19 @@ type Backend struct {
 	Dial    func(context.Context) (net.Conn, error)
 }
 
+// Keep cancellation attached after DialContext returns, including while the
+// backend is selecting a transport, acknowledging a command, or streaming data.
+type contextConn struct {
+	net.Conn
+	stop func() bool
+}
+
+func (c *contextConn) Close() error { c.stop(); return c.Conn.Close() }
+
 func (b Backend) Open(ctx context.Context, request string) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var c net.Conn
 	var e error
 	if b.Dial != nil {
@@ -81,8 +94,13 @@ func (b Backend) Open(ctx context.Context, request string) (net.Conn, error) {
 	if e != nil {
 		return nil, e
 	}
+	raw := c
+	c = &contextConn{Conn: raw, stop: context.AfterFunc(ctx, func() { raw.Close() })}
 	c.SetDeadline(time.Now().Add(10 * time.Second))
-	if e = WriteFrame(c, request); e == nil {
+	if e = ctx.Err(); e == nil {
+		e = WriteFrame(c, request)
+	}
+	if e == nil {
 		e = readStatus(c)
 	}
 	if e != nil {
@@ -110,7 +128,10 @@ func (b Backend) Device(ctx context.Context, d Device, request string) (net.Conn
 		return nil, e
 	}
 	c.SetDeadline(time.Now().Add(10 * time.Second))
-	if e = WriteFrame(c, request); e == nil {
+	if e = ctx.Err(); e == nil {
+		e = WriteFrame(c, request)
+	}
+	if e == nil {
 		e = readStatus(c)
 	}
 	if e != nil {
@@ -140,6 +161,22 @@ func ParseDevices(s string) []Device {
 	}
 	return out
 }
+
+var libusbDevicePath = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
+
+func usbDevice(d Device) bool {
+	// ADB's long text listing contains the USB devpath. Older libusb backends
+	// report bare bus-port[.port...] paths; native and newer backends use usb:.
+	// Check complete detail fields so serials and product/model values cannot
+	// cause TCP transports or emulators to be classified as USB devices.
+	for _, field := range strings.Fields(d.Detail) {
+		if strings.HasPrefix(field, "usb:") || libusbDevicePath.MatchString(field) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b Backend) Monitor(ctx context.Context, e *Engine) {
 	for ctx.Err() == nil {
 		c, err := b.Open(ctx, "host:track-devices-l")
@@ -160,7 +197,7 @@ func (b Backend) Monitor(ctx context.Context, e *Engine) {
 				}
 				var usb []Device
 				for _, d := range ParseDevices(s) {
-					if strings.Contains(" "+d.Detail, " usb:") {
+					if usbDevice(d) {
 						usb = append(usb, d)
 					}
 				}
@@ -187,18 +224,34 @@ type pumpConn struct {
 	net.Conn
 	r      *io.PipeReader
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func watch(ctx context.Context, c net.Conn) (context.Context, *pumpConn) {
 	ctx, cancel := context.WithCancel(ctx)
 	r, w := io.Pipe()
-	p := &pumpConn{c, r, cancel}
+	p := &pumpConn{Conn: c, r: r, cancel: cancel, done: make(chan struct{})}
 	go func() { _, err := io.Copy(w, c); w.CloseWithError(err); cancel() }()
 	go func() { <-ctx.Done(); p.Close() }()
 	return ctx, p
 }
 func (p *pumpConn) Read(b []byte) (int, error) { return p.r.Read(b) }
 func (p *pumpConn) Close() error               { p.cancel(); p.r.Close(); return p.Conn.Close() }
+func (p *pumpConn) finish()                    { p.Close(); close(p.done) }
+
+// Revocation must wait for the owner to finish backend I/O and close its
+// transports. Closing only the client socket is not a device lock barrier.
+type completionCloser struct {
+	io.Closer
+	done <-chan struct{}
+}
+
+func (c completionCloser) Close() error {
+	err := c.Closer.Close()
+	<-c.done
+	return err
+}
+func (p *pumpConn) accessCloser() io.Closer { return completionCloser{p, p.done} }
 func bridge(a, b io.ReadWriteCloser) {
 	done := make(chan struct{})
 	go func() { io.Copy(a, b); a.Close(); b.Close(); close(done) }()
@@ -235,7 +288,7 @@ func (g *Gateway) Handle(parent context.Context, raw net.Conn, s Scope) {
 		return
 	}
 	ctx, c := watch(parent, raw)
-	defer c.Close()
+	defer c.finish()
 	var selected *Device
 	var release func()
 	defer func() {
@@ -333,7 +386,7 @@ func (g *Gateway) Handle(parent context.Context, raw net.Conn, s Scope) {
 			return
 		}
 		acq, cancel := context.WithTimeout(ctx, g.Engine.Config().ReadWait())
-		release, err = g.Engine.Acquire(acq, s, d, c)
+		release, err = g.Engine.Acquire(acq, s, d, c.accessCloser())
 		cancel()
 		if err != nil {
 			fail(c, err)

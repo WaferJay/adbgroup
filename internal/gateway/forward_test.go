@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,7 +20,7 @@ type memNetwork struct {
 }
 type memListener struct {
 	network     *memNetwork
-	address     *net.TCPAddr
+	address     net.Addr
 	connections chan net.Conn
 	closed      chan struct{}
 	once        sync.Once
@@ -30,16 +29,22 @@ type memListener struct {
 func newMemNetwork() *memNetwork {
 	return &memNetwork{listeners: map[string]*memListener{}, next: 40000}
 }
-func (n *memNetwork) listen(_, address string) (net.Listener, error) {
+func (n *memNetwork) listen(network, address string) (net.Listener, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	a, e := net.ResolveTCPAddr("tcp", address)
-	if e != nil {
-		return nil, e
-	}
-	if a.Port == 0 {
-		n.next++
-		a.Port = n.next
+	var a net.Addr
+	if network == "unix" {
+		a = &net.UnixAddr{Name: address, Net: "unix"}
+	} else {
+		tcp, e := net.ResolveTCPAddr("tcp", address)
+		if e != nil {
+			return nil, e
+		}
+		if tcp.Port == 0 {
+			n.next++
+			tcp.Port = n.next
+		}
+		a = tcp
 	}
 	if n.listeners[a.String()] != nil {
 		return nil, errors.New("address already in use")
@@ -226,8 +231,10 @@ func TestReverseClientCallbackAndStaleCleanup(t *testing.T) {
 	b.mu.Lock()
 	target := b.reverse["tcp:8080"]
 	b.mu.Unlock()
-	port, _ := tcpPort(target, false)
-	data, err := n.dial(context.Background(), net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if !strings.HasPrefix(target, "localabstract:adbgroup-") {
+		t.Fatalf("unsafe reverse target: %q", target)
+	}
+	data, err := n.dial(context.Background(), "@"+strings.TrimPrefix(target, "localabstract:"))
 	if err != nil {
 		t.Fatal(err)
 	}

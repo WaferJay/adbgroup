@@ -179,7 +179,7 @@ func (c *Client) Run(parent context.Context, group, lease, address string) error
 			}
 			if !c.track(raw) {
 				raw.Close()
-				return
+				continue
 			}
 			go c.pipeLocal(raw, "adb", "")
 		}

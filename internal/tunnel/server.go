@@ -224,19 +224,17 @@ func (t *session) close() {
 	t.State = "closed"
 	t.cancel()
 	control := t.control
-	var conns []net.Conn
+	var streams []*stream
 	for _, v := range t.streams {
-		if v.conn != nil {
-			conns = append(conns, v.conn)
-		}
+		streams = append(streams, v)
 	}
 	t.streams = map[string]*stream{}
 	t.mu.Unlock()
 	if control != nil {
 		control.CloseNow()
 	}
-	for _, c := range conns {
-		c.Close()
+	for _, v := range streams {
+		t.closeStream(v)
 	}
 	go func() { t.server.Gateway.Forwards.Drop(t.ID); close(t.cleaned) }()
 	slog.Info("tunnel closed", "identity", t.scope.Identity, "group", t.scope.Group, "tunnel", t.ID, "lease", t.scope.Lease)
@@ -368,7 +366,15 @@ func (t *session) Request(ctx context.Context, m gateway.Control) (gateway.Contr
 	}
 	timer := time.NewTimer(setupTimeout)
 	defer timer.Stop()
+	// A reverse stream can be removed to reject late attachments after caller
+	// cancellation. Listener mutations must await their reply to avoid orphans.
+	var callerDone <-chan struct{}
+	if m.Op == "reverse" {
+		callerDone = ctx.Done()
+	}
 	select {
+	case <-callerDone:
+		return gateway.Control{}, ctx.Err()
 	case <-t.ctx.Done():
 		return gateway.Control{}, errors.New("tunnel closed")
 	case <-timer.C:
@@ -398,6 +404,21 @@ func (t *session) newStream(kind, rule string) (*stream, error) {
 		t.mu.Unlock()
 	})
 	return v, nil
+}
+
+// Removing the resource before closing the connection also rejects a late
+// WebSocket upgrade that raced with cancellation while Accept was in progress.
+func (t *session) closeStream(v *stream) {
+	v.once.Do(func() {
+		t.mu.Lock()
+		delete(t.streams, v.ID)
+		c := v.conn
+		t.mu.Unlock()
+		if c != nil {
+			c.Close()
+		}
+		close(v.done)
+	})
 }
 func (s *Server) createStream(w http.ResponseWriter, r *http.Request) {
 	t := s.owned(w, r)
@@ -438,13 +459,13 @@ func (s *Server) data(w http.ResponseWriter, r *http.Request) {
 	v.claimed = true
 	t.mu.Unlock()
 	c, err := accept(w, r)
-	defer func() { t.mu.Lock(); delete(t.streams, r.PathValue("stream")); t.mu.Unlock() }()
+	defer t.closeStream(v)
 	if err != nil {
 		return
 	}
 	conn := binaryConn(t.ctx, c)
 	t.mu.Lock()
-	if t.closed {
+	if t.closed || t.streams[v.ID] != v {
 		t.mu.Unlock()
 		c.CloseNow()
 		return
@@ -470,31 +491,29 @@ func (s *Server) data(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (t *session) Reverse(ctx context.Context, rule string, port int) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	v, err := t.newStream("reverse", rule)
 	if err != nil {
 		return nil, err
 	}
+	transferred := false
 	defer func() {
-		t.mu.Lock()
-		if v.conn == nil {
-			delete(t.streams, v.ID)
+		if !transferred {
+			t.closeStream(v)
 		}
-		t.mu.Unlock()
 	}()
 	if _, err = t.Request(ctx, gateway.Control{Op: "reverse", Rule: rule, Port: port, Stream: v.ID}); err != nil {
-		t.mu.Lock()
-		c := v.conn
-		delete(t.streams, v.ID)
-		t.mu.Unlock()
-		if c != nil {
-			c.Close()
-		}
-		v.once.Do(func() { close(v.done) })
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	select {
 	case c := <-v.ready:
-		return &reverseConn{Conn: c, done: func() { t.mu.Lock(); delete(t.streams, v.ID); t.mu.Unlock(); v.once.Do(func() { close(v.done) }) }}, nil
+		transferred = true
+		return &reverseConn{Conn: c, done: func() { t.closeStream(v) }}, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-t.ctx.Done():
@@ -510,4 +529,4 @@ type reverseConn struct {
 	once sync.Once
 }
 
-func (c *reverseConn) Close() error { err := c.Conn.Close(); c.once.Do(c.done); return err }
+func (c *reverseConn) Close() error { c.once.Do(c.done); return nil }

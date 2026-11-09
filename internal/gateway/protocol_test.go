@@ -75,6 +75,12 @@ func (b *fixtureBackend) handle(c net.Conn) {
 			} else if strings.HasPrefix(cmd, "killforward:") {
 				delete(b.reverse, strings.TrimPrefix(cmd, "killforward:"))
 				okay(c)
+			} else if cmd == "list-forward" {
+				var lines strings.Builder
+				for local, remote := range b.reverse {
+					fmt.Fprintf(&lines, "host %s %s\n", local, remote)
+				}
+				WriteFrame(c, lines.String())
 			}
 			b.mu.Unlock()
 			return
@@ -176,6 +182,7 @@ func TestWaitingClientDisconnectCancelsRead(t *testing.T) {
 
 func TestModernADBTransportThenHostForward(t *testing.T) {
 	g, _ := gatewayFixture(t)
+	g.Forwards.Listen = newMemNetwork().listen
 	n := newMemNetwork()
 	g.Forwards.Listen = n.listen
 

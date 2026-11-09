@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +27,7 @@ type memoryNetwork struct {
 }
 type memoryListener struct {
 	n        *memoryNetwork
-	addr     *net.TCPAddr
+	addr     net.Addr
 	incoming chan net.Conn
 	done     chan struct{}
 	once     sync.Once
@@ -37,16 +36,22 @@ type memoryListener struct {
 func memory() *memoryNetwork {
 	return &memoryNetwork{listeners: map[string]*memoryListener{}, next: 30000}
 }
-func (n *memoryNetwork) listen(_, address string) (net.Listener, error) {
-	a, err := net.ResolveTCPAddr("tcp", address)
-	if err != nil {
-		return nil, err
-	}
+func (n *memoryNetwork) listen(network, address string) (net.Listener, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if a.Port == 0 {
-		n.next++
-		a.Port = n.next
+	var a net.Addr
+	if network == "unix" {
+		a = &net.UnixAddr{Name: address, Net: "unix"}
+	} else {
+		tcp, err := net.ResolveTCPAddr("tcp", address)
+		if err != nil {
+			return nil, err
+		}
+		if tcp.Port == 0 {
+			n.next++
+			tcp.Port = n.next
+		}
+		a = tcp
 	}
 	if n.listeners[a.String()] != nil {
 		return nil, fmt.Errorf("address in use")
@@ -150,6 +155,9 @@ type harness struct {
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithSweep(t, true)
+}
+func newHarnessWithSweep(t *testing.T, startSweep bool) *harness {
 	t.Helper()
 	dir := t.TempDir()
 	files, err := pki.Ensure(dir+"/pki", []string{"adb.test"})
@@ -187,7 +195,9 @@ func newHarness(t *testing.T) *harness {
 	}
 	go httpServer.ServeTLS(l, "", "")
 	go e.Run(ctx)
-	go g.Forwards.Sweep(ctx)
+	if startSweep {
+		go g.Forwards.Sweep(ctx)
+	}
 	c, err := NewClient("https://adb.test:8443", user.Certificate, user.Key, user.CA)
 	if err != nil {
 		t.Fatal(err)
@@ -237,13 +247,16 @@ func status(t *testing.T, c net.Conn) {
 	}
 }
 func (h *harness) adb(t *testing.T, service string) net.Conn {
+	return h.adbDevice(t, "A", service)
+}
+func (h *harness) adbDevice(t *testing.T, serial, service string) net.Conn {
 	t.Helper()
 	c, err := h.local.dial(h.server.ctx, "127.0.0.1:15037")
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.SetDeadline(time.Now().Add(3 * time.Second))
-	gateway.WriteFrame(c, "host:transport:A")
+	gateway.WriteFrame(c, "host:transport:"+serial)
 	status(t, c)
 	gateway.WriteFrame(c, service)
 	status(t, c)
@@ -304,11 +317,10 @@ func TestMTLSTunnelADBForwardReverseAndCleanup(t *testing.T) {
 	h.backend.mu.Lock()
 	target := h.backend.reverse["tcp:8080"]
 	h.backend.mu.Unlock()
-	n, err := strconv.Atoi(strings.TrimPrefix(target, "tcp:"))
-	if err != nil {
-		t.Fatal(err)
+	if !strings.HasPrefix(target, "localabstract:adbgroup-") {
+		t.Fatalf("unsafe reverse target: %q", target)
 	}
-	reverse, err := h.host.dial(h.server.ctx, fmt.Sprintf("127.0.0.1:%d", n))
+	reverse, err := h.host.dial(h.server.ctx, "@"+strings.TrimPrefix(target, "localabstract:"))
 	if err != nil {
 		t.Fatal(err)
 	}
