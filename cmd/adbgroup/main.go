@@ -254,8 +254,13 @@ func supervise(ctx context.Context, c gateway.BackendConfig, errs chan<- error) 
 		errs <- err
 		return
 	}
+	listen, err := adbListenSocket(c.Address)
+	if err != nil {
+		errs <- err
+		return
+	}
 	for ctx.Err() == nil {
-		cmd := exec.CommandContext(ctx, path, "-L", "tcp:"+c.Address, "server", "nodaemon")
+		cmd := exec.CommandContext(ctx, path, "-L", listen, "server", "nodaemon")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Env = append(os.Environ(), "ADB_MDNS_AUTO_CONNECT=none", "ADB_LOCAL_TRANSPORT_MAX_PORT=0")
@@ -270,4 +275,15 @@ func supervise(ctx context.Context, c gateway.BackendConfig, errs chan<- error) 
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+func adbListenSocket(address string) (string, error) {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("invalid backend address: %w", err)
+	}
+	// ADB only accepts the special hostname "localhost" for a smartsocket
+	// listener. The gateway still dials the numeric loopback address from the
+	// configuration, avoiding hostname resolution for backend connections.
+	return "tcp:localhost:" + port, nil
 }

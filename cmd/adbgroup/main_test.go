@@ -97,6 +97,19 @@ func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 	}
 }
 
+func TestADBListenSocketUsesSupportedHostname(t *testing.T) {
+	got, err := adbListenSocket("127.0.0.1:5038")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "tcp:localhost:5038" {
+		t.Fatalf("unexpected ADB listen socket %q", got)
+	}
+	if _, err := adbListenSocket("invalid"); err == nil {
+		t.Fatal("invalid backend address accepted")
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
