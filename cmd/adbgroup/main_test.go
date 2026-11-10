@@ -28,6 +28,13 @@ func TestLoadExampleAndRejectUnknownOrExtraDocuments(t *testing.T) {
 	if !filepath.IsAbs(c.API.Certificate) || !c.Groups[0].Contains("USB_SERIAL_SHARED") {
 		t.Fatal("paths or shared membership not loaded")
 	}
+	barePort := strings.Replace(string(example), "address: 127.0.0.1:5038", "address: 5038", 1)
+	if err = os.WriteFile(path, []byte(barePort), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = load(path); err != nil || c.Backend.Address != "5038" {
+		t.Fatalf("bare backend port not loaded: address=%q error=%v", c.Backend.Address, err)
+	}
 	for _, s := range []string{string(example) + "\nunknown_field: true\n", string(example) + "\n---\n{}\n", string(example) + "\nlease_ssh: {}\n", strings.Replace(string(example), "name: team-b", "name: team-a", 1)} {
 		if err = os.WriteFile(path, []byte(s), 0600); err != nil {
 			t.Fatal(err)
@@ -97,15 +104,23 @@ func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 	}
 }
 
-func TestADBListenSocketUsesSupportedHostname(t *testing.T) {
-	got, err := adbListenSocket("127.0.0.1:5038")
-	if err != nil {
-		t.Fatal(err)
+func TestADBServerArgsFollowBackendAddressForm(t *testing.T) {
+	for _, tc := range []struct {
+		address string
+		want    string
+	}{
+		{"127.0.0.1:5038", "-L tcp:localhost:5038 server nodaemon"},
+		{"5038", "-a -L tcp:5038 server nodaemon"},
+	} {
+		got, err := adbServerArgs(tc.address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if joined := strings.Join(got, " "); joined != tc.want {
+			t.Fatalf("adbServerArgs(%q) = %q, want %q", tc.address, joined, tc.want)
+		}
 	}
-	if got != "tcp:localhost:5038" {
-		t.Fatalf("unexpected ADB listen socket %q", got)
-	}
-	if _, err := adbListenSocket("invalid"); err == nil {
+	if _, err := adbServerArgs("invalid"); err == nil {
 		t.Fatal("invalid backend address accepted")
 	}
 }

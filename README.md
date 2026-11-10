@@ -17,7 +17,10 @@ bin/adbgroup check -config config.yaml
 bin/adbgroup serve -config config.yaml
 ```
 
-服务只公开一个 HTTPS 入口，REST API 和 WebSocket 隧道共用它。实际 ADB server 强制监听回环地址，属于受信任的服务端本机边界；不要向远程用户开放这个原始端口或通用主机访问。
+REST API 和 WebSocket 隧道共用 HTTPS 入口。`backend.address` 使用数值回环地址（如
+`127.0.0.1:5038`）时，ADB server 仅监听回环；使用裸端口（如 `5038`）时监听所有
+接口，便于容器端口转发，网关内部仍通过 `127.0.0.1:5038` 连接。原始 ADB 端口不
+经过 mTLS、分组授权和设备锁，只应显式映射到宿主机回环地址，不要向远程用户开放。
 
 `backend.manage: true` 使用专用端口启动常驻 ADB server；端口已有进程时拒绝启动。单台设备拔插不重启后端，其他设备继续运行。后台 ADB server 故障仍会中断所有设备连接。
 

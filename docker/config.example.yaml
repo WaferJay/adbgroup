@@ -1,6 +1,7 @@
 backend:
   binary: /usr/bin/adb
-  address: 127.0.0.1:5038
+  # A bare port listens on all container interfaces so Docker can publish it.
+  address: 5038
   manage: true
 
 api:

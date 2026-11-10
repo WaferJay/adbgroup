@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,6 +24,11 @@ type BackendConfig struct {
 	Binary  string `yaml:"binary"`
 	Address string `yaml:"address"`
 	Manage  bool   `yaml:"manage"`
+}
+type BackendEndpoint struct {
+	DialAddress string
+	Port        string
+	ListenAll   bool
 }
 type APIConfig struct {
 	Listen      string `yaml:"listen"`
@@ -63,17 +69,40 @@ func (c *Config) Defaults() {
 		c.ReadQueueLimit = 128
 	}
 }
-func loopback(address string) bool {
-	h, p, e := net.SplitHostPort(address)
-	if e != nil || p == "0" {
-		return false
+func ParseBackendAddress(address string) (BackendEndpoint, error) {
+	if !strings.Contains(address, ":") {
+		port, err := parseBackendPort(address)
+		if err != nil {
+			return BackendEndpoint{}, err
+		}
+		return BackendEndpoint{DialAddress: net.JoinHostPort("127.0.0.1", port), Port: port, ListenAll: true}, nil
 	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
+	host, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		return BackendEndpoint{}, err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !ip.IsLoopback() {
+		return BackendEndpoint{}, fmt.Errorf("host must be a numeric loopback address")
+	}
+	port, err := parseBackendPort(rawPort)
+	if err != nil {
+		return BackendEndpoint{}, err
+	}
+	return BackendEndpoint{DialAddress: net.JoinHostPort(ip.String(), port), Port: port}, nil
+}
+
+func parseBackendPort(port string) (string, error) {
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return "", fmt.Errorf("port must be an integer between 1 and 65535")
+	}
+	return strconv.Itoa(n), nil
 }
 func (c Config) Validate() error {
-	if !loopback(c.Backend.Address) {
-		return fmt.Errorf("backend.address must be a numeric loopback address with a nonzero port")
+	backend, err := ParseBackendAddress(c.Backend.Address)
+	if err != nil {
+		return fmt.Errorf("backend.address must be a port or numeric loopback address: %w", err)
 	}
 	if c.ReadWaitSeconds < 1 || c.ReadWaitSeconds > 3600 || c.ReadQueueLimit < 1 {
 		return fmt.Errorf("invalid reader limits")
@@ -84,7 +113,13 @@ func (c Config) Validate() error {
 	if c.API.Listen == "" {
 		return fmt.Errorf("API listener is required")
 	}
-	if c.Backend.Address == c.API.Listen {
+	apiHost, apiPort, err := net.SplitHostPort(c.API.Listen)
+	if err != nil {
+		return err
+	}
+	apiIP := net.ParseIP(apiHost)
+	apiAll := apiHost == "" || apiIP != nil && apiIP.IsUnspecified()
+	if backend.Port == apiPort && (backend.ListenAll || apiAll || backend.DialAddress == c.API.Listen) {
 		return fmt.Errorf("listener addresses overlap")
 	}
 	names := map[string]bool{}
@@ -109,11 +144,6 @@ func (c Config) Validate() error {
 			if !names[g] {
 				return fmt.Errorf("identity %s references unknown group %s", identity, g)
 			}
-		}
-	}
-	for _, a := range []string{c.API.Listen} {
-		if _, _, e := net.SplitHostPort(a); e != nil {
-			return e
 		}
 	}
 	return nil

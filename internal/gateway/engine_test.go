@@ -50,6 +50,10 @@ func TestConfigValidation(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	c.Backend.Address = "5037"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("bare backend port rejected: %v", err)
+	}
 	c.Groups[1].Name = c.Groups[0].Name
 	if c.Validate() == nil {
 		t.Fatal("duplicate groups accepted")
@@ -58,6 +62,30 @@ func TestConfigValidation(t *testing.T) {
 	c.Backend.Address = "0.0.0.0:5037"
 	if c.Validate() == nil {
 		t.Fatal("public listener accepted")
+	}
+}
+
+func TestParseBackendAddress(t *testing.T) {
+	for _, tc := range []struct {
+		input, dial, port string
+		all               bool
+	}{
+		{"5038", "127.0.0.1:5038", "5038", true},
+		{"127.0.0.1:5038", "127.0.0.1:5038", "5038", false},
+		{"[::1]:5038", "[::1]:5038", "5038", false},
+	} {
+		got, err := ParseBackendAddress(tc.input)
+		if err != nil {
+			t.Fatalf("ParseBackendAddress(%q): %v", tc.input, err)
+		}
+		if got.DialAddress != tc.dial || got.Port != tc.port || got.ListenAll != tc.all {
+			t.Fatalf("ParseBackendAddress(%q) = %+v", tc.input, got)
+		}
+	}
+	for _, input := range []string{"0", "65536", "localhost:5038", "0.0.0.0:5038", ":5038", "invalid"} {
+		if _, err := ParseBackendAddress(input); err == nil {
+			t.Fatalf("invalid backend address %q accepted", input)
+		}
 	}
 }
 

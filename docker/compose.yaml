@@ -9,6 +9,7 @@ services:
     restart: unless-stopped
     ports:
       - "${ADBGROUP_PORT:-8443}:8443"
+      - "127.0.0.1:${ADBGROUP_ADB_PORT:-5039}:5038"
     volumes:
       - type: bind
         source: ./config.yaml

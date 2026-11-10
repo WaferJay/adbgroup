@@ -177,8 +177,12 @@ func run() error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	backendEndpoint, err := gateway.ParseBackendAddress(cfg.Backend.Address)
+	if err != nil {
+		return err
+	}
 	engine := gateway.NewEngine(cfg)
-	backend := gateway.Backend{Address: cfg.Backend.Address}
+	backend := gateway.Backend{Address: backendEndpoint.DialAddress}
 	g := gateway.NewGateway(engine, backend)
 	ts := tunnel.NewServer(ctx, g)
 	defer ts.Close()
@@ -192,7 +196,7 @@ func run() error {
 	go func() { errs <- server.ServeTLS(apiListener, "", "") }()
 
 	if cfg.Backend.Manage {
-		if c, e := net.DialTimeout("tcp", cfg.Backend.Address, time.Second); e == nil {
+		if c, e := net.DialTimeout("tcp", backendEndpoint.DialAddress, time.Second); e == nil {
 			c.Close()
 			return errors.New("managed backend port is already in use; choose a dedicated port or set manage: false")
 		}
@@ -254,13 +258,13 @@ func supervise(ctx context.Context, c gateway.BackendConfig, errs chan<- error) 
 		errs <- err
 		return
 	}
-	listen, err := adbListenSocket(c.Address)
+	args, err := adbServerArgs(c.Address)
 	if err != nil {
 		errs <- err
 		return
 	}
 	for ctx.Err() == nil {
-		cmd := exec.CommandContext(ctx, path, "-L", listen, "server", "nodaemon")
+		cmd := exec.CommandContext(ctx, path, args...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Env = append(os.Environ(), "ADB_MDNS_AUTO_CONNECT=none", "ADB_LOCAL_TRANSPORT_MAX_PORT=0")
@@ -277,13 +281,13 @@ func supervise(ctx context.Context, c gateway.BackendConfig, errs chan<- error) 
 	}
 }
 
-func adbListenSocket(address string) (string, error) {
-	_, port, err := net.SplitHostPort(address)
+func adbServerArgs(address string) ([]string, error) {
+	endpoint, err := gateway.ParseBackendAddress(address)
 	if err != nil {
-		return "", fmt.Errorf("invalid backend address: %w", err)
+		return nil, fmt.Errorf("invalid backend address: %w", err)
 	}
-	// ADB only accepts the special hostname "localhost" for a smartsocket
-	// listener. The gateway still dials the numeric loopback address from the
-	// configuration, avoiding hostname resolution for backend connections.
-	return "tcp:localhost:" + port, nil
+	if endpoint.ListenAll {
+		return []string{"-a", "-L", "tcp:" + endpoint.Port, "server", "nodaemon"}, nil
+	}
+	return []string{"-L", "tcp:localhost:" + endpoint.Port, "server", "nodaemon"}, nil
 }

@@ -1,5 +1,8 @@
 backend:
   binary: /usr/local/bin/adb
+  # Use a numeric loopback address for a private backend. A bare port listens
+  # on all interfaces and is intended for an explicitly restricted container
+  # port mapping such as 127.0.0.1:5039:5038.
   address: 127.0.0.1:5038
   manage: true
 

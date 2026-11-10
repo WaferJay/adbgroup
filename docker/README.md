@@ -86,6 +86,24 @@ API 默认发布到宿主机的 `8443` 端口。可以在启动前通过环境�
 ADBGROUP_PORT=9443 docker compose up -d --no-build
 ```
 
+容器内的原生 ADB server 默认通过宿主机回环地址 `127.0.0.1:5039` 访问：
+
+```sh
+adb -H 127.0.0.1 -P 5039 devices
+```
+
+如需修改宿主机端口：
+
+```sh
+ADBGROUP_ADB_PORT=15038 docker compose up -d --no-build
+adb -H 127.0.0.1 -P 15038 devices
+```
+
+Docker 配置中的裸 `backend.address: 5038` 会让 ADB server 监听容器所有接口，供
+端口发布使用；adbgroup 自身仍通过容器回环地址连接它。Compose 将原始 ADB 端口
+限制在宿主机 `127.0.0.1`，因为该端口不经过 mTLS、分组授权或设备锁，不应改为
+公网监听。
+
 宿主机的 `data/` 目录保存自动生成的 CA、服务端证书以及 ADB 主机密钥。升级或
 重建容器不会更换这些凭据。请把该目录作为敏感数据备份；删除它会丢失 CA 私钥，
 已签发的客户端证书也将无法继续使用。
