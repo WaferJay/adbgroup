@@ -1,8 +1,8 @@
 # Docker 部署
 
-此目录用于在 Linux Docker 主机上运行 adbgroup 服务端。`compose.yaml` 只引用
-镜像，不依赖仓库源码，可以连同配置示例单独复制到部署主机。`compose.build.yaml`
-只用于在本仓库内从源码构建镜像。
+此目录用于在 Linux Docker 主机上构建和运行 adbgroup 服务端。`compose.yaml` 同时
+声明镜像名称和源码构建方式：在仓库内可以构建镜像；独立部署时可以连同配置示例
+复制到部署主机，并使用已有或从镜像仓库拉取的镜像。
 
 容器以固定的非 root 用户运行，不需要 `privileged: true`。macOS 和 Windows 上的
 Docker 运行在虚拟机中，不能按此方式直接访问宿主机 USB 设备。
@@ -13,7 +13,7 @@ Docker 运行在虚拟机中，不能按此方式直接访问宿主机 USB 设�
 
 ```sh
 cd docker
-docker compose -f compose.yaml -f compose.build.yaml build
+docker compose build
 ```
 
 这会生成默认名称 `adbgroup:local`。也可以把镜像推送到私有或公共镜像仓库；独立
@@ -22,6 +22,13 @@ docker compose -f compose.yaml -f compose.build.yaml build
 ```sh
 export ADBGROUP_IMAGE=registry.example.com/adbgroup:1.0.0
 docker compose pull
+```
+
+独立部署目录不需要仓库源码。运行时使用 `--no-build`，明确禁止 Compose 尝试源码
+构建：
+
+```sh
+docker compose up -d --no-build
 ```
 
 如果不使用镜像仓库，可以在构建机器上执行 `docker save adbgroup:local`，传输归档
@@ -69,14 +76,14 @@ rootless Docker 通常不能直接授予 USB 字符设备访问权。此部署�
 
 ```sh
 docker compose run --rm adbgroup check -config /etc/adbgroup/config.yaml
-docker compose up -d
+docker compose up -d --no-build
 docker compose logs -f adbgroup
 ```
 
 API 默认发布到宿主机的 `8443` 端口。可以在启动前通过环境变量修改宿主机端口：
 
 ```sh
-ADBGROUP_PORT=9443 docker compose up -d
+ADBGROUP_PORT=9443 docker compose up -d --no-build
 ```
 
 宿主机的 `data/` 目录保存自动生成的 CA、服务端证书以及 ADB 主机密钥。升级或
@@ -116,7 +123,7 @@ docker compose kill -s HUP adbgroup
 后端、监听、PKI 或分组名称变化需要重建容器：
 
 ```sh
-docker compose up -d --force-recreate
+docker compose up -d --no-build --force-recreate
 ```
 
 停止服务但保留 `data/`：

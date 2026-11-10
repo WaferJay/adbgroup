@@ -1,5 +1,0 @@
-services:
-  adbgroup:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile

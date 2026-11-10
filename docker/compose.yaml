@@ -2,6 +2,9 @@ name: adbgroup
 
 services:
   adbgroup:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: "${ADBGROUP_IMAGE:-adbgroup:local}"
     restart: unless-stopped
     ports:
