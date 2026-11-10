@@ -82,6 +82,28 @@ credentials: /path/to/run/clients/alice
 adbgroup t
 ```
 
+`t` 默认自动启动当前用户的后台 daemon，将 tunnel 交给它管理，等本地监听就绪后返回。关闭终端后 tunnel 继续运行。同一 daemon 可以管理多个服务端或分组的 tunnel，每条 tunnel 需要使用不同的本地监听端口：
+
+```sh
+adbgroup t -g team-a -l 15037
+adbgroup t -g team-b -l 15038
+adbgroup t list             # ID、服务端、分组、监听地址、状态、最近错误
+adbgroup t list --json
+adbgroup t stop <id>        # 停止并移除指定 tunnel
+
+adbgroup daemon status
+adbgroup daemon start      # 可选；t 命令会自动启动
+adbgroup daemon stop       # 等待全部 tunnel 清理后退出
+
+adbgroup t --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
+```
+
+启动成功会输出 tunnel ID 和 `export ADB_SERVER_SOCKET=tcp:127.0.0.1:端口`。在使用 adb/Appium 的终端设置对应的环境变量即可选择 tunnel。重复提交相同参数会复用已有 tunnel；同一监听地址使用不同配置会报冲突，需要先停止旧 tunnel。
+
+连接断开时只影响该 tunnel，其状态变为 `failed`，原有 forward/reverse 规则清空；再次提交相同启动命令可手动恢复，规则需要重新创建。daemon 不自动重连、不保存 tunnel 配置，重启后需要重新提交启动命令。
+
+daemon 支持 macOS/Linux，控制 socket 位于 `~/.config/adbgroup/daemon/control.sock`，目录权限为 `0700`，socket 权限为 `0600`；日志写入同目录的 `daemon.log`。本地控制协议版本不兼容时会报错，应先使用旧版本命令停止 daemon，再使用新版本启动。首版不安装系统服务或配置开机自启。
+
 不使用配置文件时，远程连接也可以简写为：
 
 ```sh

@@ -1,4 +1,7 @@
 # Install as ~/.config/adbgroup/tunnel.yaml.
+# adbgroup t submits this tunnel to the per-user daemon and returns when ready.
+# Use different listen ports for multiple tunnels; adbgroup t list/stop manages them.
+# Use adbgroup t --no-daemon to run in the foreground.
 server: https://adb-host.example:8443
 group: team-a
 

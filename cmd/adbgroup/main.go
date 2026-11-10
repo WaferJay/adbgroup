@@ -57,7 +57,7 @@ func load(path string) (gateway.Config, error) {
 	return c, c.Validate()
 }
 func main() {
-	if err := run(); err != nil {
+	if err := run(); err != nil && !errors.Is(err, flag.ErrHelp) {
 		slog.Error("adbgroup stopped", "error", err)
 		os.Exit(1)
 	}
@@ -201,9 +201,15 @@ func canonicalCommand(command string) string {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: adbgroup <check|tunnel (t)|cert|serve> [options]")
+		return errors.New("usage: adbgroup <check|tunnel (t)|daemon|cert|serve> [options]")
 	}
 	command := canonicalCommand(os.Args[1])
+	if command == "daemon" {
+		return runDaemonCommand(os.Args[2:], os.Stdout)
+	}
+	if command == "tunnel" && len(os.Args) > 2 && (os.Args[2] == "list" || os.Args[2] == "stop") {
+		return runTunnelCommand(os.Args[2:], os.Stdout)
+	}
 	flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
 	configDefault := "config.yaml"
 	if command == "tunnel" {
@@ -217,8 +223,10 @@ func run() error {
 	var user, identity, out, caKey, caCert *string
 	var days *int
 	var tunnelFlags *tunnelOptions
+	var noDaemon bool
 	if command == "tunnel" {
 		tunnelFlags = bindTunnelFlags(flags)
+		flags.BoolVar(&noDaemon, "no-daemon", false, "run the tunnel in the foreground")
 		flags.StringVar(file, "f", configDefault, "short for -config")
 	}
 	if command == "cert" {
@@ -250,6 +258,9 @@ func run() error {
 			tunnelFlags.applyFile(configured, flags)
 		}
 		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
+		if !noDaemon {
+			return startManagedTunnel(tunnelFlags, clientCert, clientKey, serverCA, os.Stdout)
+		}
 		client, err := tunnel.NewClient(tunnelFlags.server, clientCert, clientKey, serverCA)
 		if err != nil {
 			return err

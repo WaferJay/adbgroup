@@ -129,6 +129,9 @@ func localAddress(address string) (string, error) {
 	return net.JoinHostPort(ip.String(), strconv.Itoa(n)), nil
 }
 
+// LocalAddress validates and canonicalizes a local ADB listener address.
+func LocalAddress(address string) (string, error) { return localAddress(address) }
+
 func (c *Client) resolveGroup(ctx context.Context, group string) (string, error) {
 	if group != "" {
 		return group, nil
@@ -153,6 +156,13 @@ func (c *Client) resolveGroup(ctx context.Context, group string) (string, error)
 // Run owns the local ADB listener and every associated data socket. It never
 // reconnects or replays commands after the authenticated control channel fails.
 func (c *Client) Run(parent context.Context, group, lease, address string) error {
+	return c.RunReady(parent, group, lease, address, nil)
+}
+
+// RunReady calls ready once the authenticated tunnel and local listener are ready.
+// Each Client must be used for only one Run or RunReady invocation.
+func (c *Client) RunReady(parent context.Context, group, lease, address string, readyFunc func(group, address string)) error {
+	defer c.http.CloseIdleConnections()
 	address, err := localAddress(address)
 	if err != nil {
 		return err
@@ -216,6 +226,9 @@ func (c *Client) Run(parent context.Context, group, lease, address string) error
 		}
 	}()
 	slog.Info("ADB tunnel ready", "listen", address, "group", group, "lease", lease)
+	if readyFunc != nil {
+		readyFunc(group, address)
+	}
 	slots := make(chan struct{}, 64)
 	for {
 		var m gateway.Control
