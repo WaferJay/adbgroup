@@ -1,0 +1,9 @@
+.git
+.cache
+bin
+run
+docker/config.yaml
+docker/clients
+docker/data
+*.pem
+*.key

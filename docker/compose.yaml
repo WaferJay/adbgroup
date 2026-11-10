@@ -1,0 +1,33 @@
+name: adbgroup
+
+services:
+  adbgroup:
+    image: "${ADBGROUP_IMAGE:-adbgroup:local}"
+    restart: unless-stopped
+    ports:
+      - "${ADBGROUP_PORT:-8443}:8443"
+    volumes:
+      - type: bind
+        source: ./config.yaml
+        target: /etc/adbgroup/config.yaml
+        read_only: true
+      - type: bind
+        source: ./data
+        target: /var/lib/adbgroup
+      - type: bind
+        source: /dev/bus/usb
+        target: /dev/bus/usb
+    # USB device nodes normally belong to the host's plugdev group. Set
+    # USB_GID to that group's numeric GID before starting the container.
+    group_add:
+      - "${USB_GID:-46}"
+    device_cgroup_rules:
+      - "c 189:* rmw"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    stop_grace_period: 30s

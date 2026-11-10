@@ -1,0 +1,25 @@
+backend:
+  binary: /usr/bin/adb
+  address: 127.0.0.1:5038
+  manage: true
+
+api:
+  listen: 0.0.0.0:8443
+
+pki:
+  directory: /var/lib/adbgroup/pki
+  # Add the public/NAT DNS names or IPs before the first start.
+  server_names: [adb-host.example]
+
+read_wait_seconds: 30
+read_queue_limit: 128
+
+groups:
+  - name: team-a
+    devices: [USB_SERIAL_A, USB_SERIAL_SHARED]
+  - name: team-b
+    devices: [USB_SERIAL_B, USB_SERIAL_SHARED]
+
+identities:
+  "spiffe://adbgroup/alice": [team-a]
+  "spiffe://adbgroup/bob": [team-b]
