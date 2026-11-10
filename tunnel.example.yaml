@@ -1,0 +1,9 @@
+# Install as ~/.config/adbgroup/tunnel.yaml.
+server: https://adb-host.example:8443
+group: team-a
+
+# Optional. When omitted, client.pem, client.key and ca.pem are read from the
+# directory containing tunnel.yaml. Relative paths are resolved from there.
+# credentials: credentials/alice
+
+# listen: 127.0.0.1:15037

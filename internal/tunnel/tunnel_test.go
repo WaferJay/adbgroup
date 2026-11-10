@@ -388,6 +388,24 @@ func TestTunnelResourceAuthorizationAndLeaseBinding(t *testing.T) {
 	}
 }
 
+func TestTunnelAutomaticallySelectsOnlyAuthorizedGroup(t *testing.T) {
+	h := newHarness(t)
+	group, err := h.client.resolveGroup(h.server.ctx, "")
+	if err != nil || group != "a" {
+		t.Fatalf("automatic group = %q, %v", group, err)
+	}
+	if group, err = h.client.resolveGroup(h.server.ctx, "explicit"); err != nil || group != "explicit" {
+		t.Fatalf("explicit group = %q, %v", group, err)
+	}
+	cfg := h.engine.Config()
+	cfg.Groups = append(cfg.Groups, gateway.Group{Name: "b"})
+	cfg.Identities["spiffe://adbgroup/alice"] = []string{"a", "b"}
+	h.engine.Reload(cfg)
+	if _, err = h.client.resolveGroup(h.server.ctx, ""); err == nil || !strings.Contains(err.Error(), "multiple groups authorized (a, b)") {
+		t.Fatalf("multiple groups were not rejected: %v", err)
+	}
+}
+
 func TestMTLSRevocationAndHotplugAreScoped(t *testing.T) {
 	h := newHarness(t)
 	h.start(t, "")

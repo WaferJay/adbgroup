@@ -63,24 +63,163 @@ func main() {
 	}
 }
 
+const defaultTunnelServer = "https://127.0.0.1:8443"
+const tunnelConfigPath = ".config/adbgroup/tunnel.yaml"
+
+type tunnelOptions struct {
+	server, group, lease, listen string
+	credentials, cert, key, ca   string
+}
+
+type tunnelFile struct {
+	Server      string `yaml:"server"`
+	Group       string `yaml:"group"`
+	Listen      string `yaml:"listen"`
+	Credentials string `yaml:"credentials"`
+	Certificate string `yaml:"cert"`
+	Key         string `yaml:"key"`
+	CA          string `yaml:"ca"`
+}
+
+func defaultTunnelConfig() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate home directory: %w", err)
+	}
+	return filepath.Join(home, tunnelConfigPath), nil
+}
+
+func loadTunnelFile(path string) (tunnelFile, bool, error) {
+	var c tunnelFile
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return c, false, nil
+	}
+	if err != nil {
+		return c, false, err
+	}
+	defer f.Close()
+	d := yaml.NewDecoder(f)
+	d.KnownFields(true)
+	if err = d.Decode(&c); err != nil {
+		return c, true, err
+	}
+	var extra any
+	if err = d.Decode(&extra); err != io.EOF {
+		return c, true, errors.New("exactly one YAML document required")
+	}
+	base, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return c, true, err
+	}
+	if c.Credentials == "" {
+		c.Credentials = base
+	}
+	for _, value := range []*string{&c.Credentials, &c.Certificate, &c.Key, &c.CA} {
+		if *value != "" && !filepath.IsAbs(*value) {
+			*value = filepath.Join(base, *value)
+		}
+	}
+	return c, true, nil
+}
+
+func flagWasSet(flags *flag.FlagSet, names ...string) bool {
+	set := false
+	flags.Visit(func(f *flag.Flag) {
+		for _, name := range names {
+			if f.Name == name {
+				set = true
+			}
+		}
+	})
+	return set
+}
+
+func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
+	credentialsSet := flagWasSet(flags, "credentials", "d")
+	if c.Server != "" && !flagWasSet(flags, "server", "s") {
+		o.server = c.Server
+	}
+	if c.Group != "" && !flagWasSet(flags, "group", "g") {
+		o.group = c.Group
+	}
+	if c.Listen != "" && !flagWasSet(flags, "listen", "l") {
+		o.listen = c.Listen
+	}
+	if c.Credentials != "" && !credentialsSet {
+		o.credentials = c.Credentials
+	}
+	if c.Certificate != "" && !credentialsSet && !flagWasSet(flags, "cert") {
+		o.cert = c.Certificate
+	}
+	if c.Key != "" && !credentialsSet && !flagWasSet(flags, "key") {
+		o.key = c.Key
+	}
+	if c.CA != "" && !credentialsSet && !flagWasSet(flags, "ca") {
+		o.ca = c.CA
+	}
+}
+
+func bindTunnelFlags(flags *flag.FlagSet) *tunnelOptions {
+	o := &tunnelOptions{server: defaultTunnelServer, listen: "127.0.0.1:15037", credentials: "."}
+	flags.StringVar(&o.server, "server", o.server, "HTTPS server origin")
+	flags.StringVar(&o.server, "s", o.server, "short for -server")
+	flags.StringVar(&o.group, "group", "", "group (auto-selected when only one is authorized)")
+	flags.StringVar(&o.group, "g", "", "short for -group")
+	flags.StringVar(&o.lease, "lease", "", "active write lease ID")
+	flags.StringVar(&o.lease, "w", "", "short for -lease")
+	flags.StringVar(&o.listen, "listen", o.listen, "local ADB listener")
+	flags.StringVar(&o.listen, "l", o.listen, "short for -listen")
+	flags.StringVar(&o.credentials, "credentials", o.credentials, "directory containing client.pem, client.key and ca.pem")
+	flags.StringVar(&o.credentials, "d", o.credentials, "short for -credentials")
+	flags.StringVar(&o.cert, "cert", "", "client certificate (defaults to CREDENTIALS/client.pem)")
+	flags.StringVar(&o.key, "key", "", "client private key (defaults to CREDENTIALS/client.key)")
+	flags.StringVar(&o.ca, "ca", "", "server CA trust bundle (defaults to CREDENTIALS/ca.pem)")
+	return o
+}
+
+func (o *tunnelOptions) credentialFiles() (string, string, string) {
+	cert, key, ca := o.cert, o.key, o.ca
+	if cert == "" {
+		cert = filepath.Join(o.credentials, "client.pem")
+	}
+	if key == "" {
+		key = filepath.Join(o.credentials, "client.key")
+	}
+	if ca == "" {
+		ca = filepath.Join(o.credentials, "ca.pem")
+	}
+	return cert, key, ca
+}
+
+func canonicalCommand(command string) string {
+	if command == "t" {
+		return "tunnel"
+	}
+	return command
+}
+
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: adbgroup <check|tunnel|cert|serve> -config config.yaml")
+		return errors.New("usage: adbgroup <check|tunnel (t)|cert|serve> [options]")
 	}
-	command := os.Args[1]
-	flags := flag.NewFlagSet(command, flag.ContinueOnError)
-	file := flags.String("config", "config.yaml", "configuration file")
+	command := canonicalCommand(os.Args[1])
+	flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
+	configDefault := "config.yaml"
+	if command == "tunnel" {
+		var err error
+		configDefault, err = defaultTunnelConfig()
+		if err != nil {
+			return err
+		}
+	}
+	file := flags.String("config", configDefault, "configuration file")
 	var user, identity, out, caKey, caCert *string
 	var days *int
-	var serverURL, group, lease, listen, clientCert, clientKey, serverCA *string
+	var tunnelFlags *tunnelOptions
 	if command == "tunnel" {
-		serverURL = flags.String("server", "", "HTTPS server origin")
-		group = flags.String("group", "", "group")
-		lease = flags.String("lease", "", "active write lease ID")
-		listen = flags.String("listen", "127.0.0.1:15037", "local ADB listener")
-		clientCert = flags.String("cert", "", "client certificate")
-		clientKey = flags.String("key", "", "client private key")
-		serverCA = flags.String("ca", "", "server CA trust bundle")
+		tunnelFlags = bindTunnelFlags(flags)
+		flags.StringVar(file, "f", configDefault, "short for -config")
 	}
 	if command == "cert" {
 		user = flags.String("user", "", "user name (identity becomes spiffe://adbgroup/USER)")
@@ -100,16 +239,24 @@ func run() error {
 		return errors.New("unexpected positional arguments")
 	}
 	if command == "tunnel" {
-		if *group == "" {
-			return errors.New("-group is required")
+		configured, found, err := loadTunnelFile(*file)
+		if err != nil {
+			return fmt.Errorf("load tunnel config %s: %w", *file, err)
 		}
-		client, err := tunnel.NewClient(*serverURL, *clientCert, *clientKey, *serverCA)
+		if !found && flagWasSet(flags, "config", "f") {
+			return fmt.Errorf("tunnel config %s does not exist", *file)
+		}
+		if found {
+			tunnelFlags.applyFile(configured, flags)
+		}
+		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
+		client, err := tunnel.NewClient(tunnelFlags.server, clientCert, clientKey, serverCA)
 		if err != nil {
 			return err
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		return client.Run(ctx, *group, *lease, *listen)
+		return client.Run(ctx, tunnelFlags.group, tunnelFlags.lease, tunnelFlags.listen)
 	}
 	cfg, err := load(*file)
 	if err != nil {

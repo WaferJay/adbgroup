@@ -126,6 +126,27 @@ func localAddress(address string) error {
 	return nil
 }
 
+func (c *Client) resolveGroup(ctx context.Context, group string) (string, error) {
+	if group != "" {
+		return group, nil
+	}
+	var groups []gateway.Group
+	if err := c.request(ctx, "GET", "/v1/groups", nil, &groups); err != nil {
+		return "", fmt.Errorf("discover groups: %w", err)
+	}
+	if len(groups) == 0 {
+		return "", errors.New("client identity has no authorized groups")
+	}
+	if len(groups) == 1 {
+		return groups[0].Name, nil
+	}
+	names := make([]string, len(groups))
+	for i, group := range groups {
+		names[i] = group.Name
+	}
+	return "", fmt.Errorf("multiple groups authorized (%s); choose one with -group or -g", strings.Join(names, ", "))
+}
+
 // Run owns the local ADB listener and every associated data socket. It never
 // reconnects or replays commands after the authenticated control channel fails.
 func (c *Client) Run(parent context.Context, group, lease, address string) error {
@@ -135,9 +156,15 @@ func (c *Client) Run(parent context.Context, group, lease, address string) error
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	c.ctx = ctx
-	var resource Resource
 	setup, stop := context.WithTimeout(ctx, setupTimeout)
-	err := c.request(setup, "POST", "/v1/groups/"+url.PathEscape(group)+"/tunnels", map[string]string{"lease_id": lease}, &resource)
+	group, err := c.resolveGroup(setup, group)
+	stop()
+	if err != nil {
+		return err
+	}
+	var resource Resource
+	setup, stop = context.WithTimeout(ctx, setupTimeout)
+	err = c.request(setup, "POST", "/v1/groups/"+url.PathEscape(group)+"/tunnels", map[string]string{"lease_id": lease}, &resource)
 	stop()
 	if err != nil {
 		return err

@@ -67,13 +67,25 @@ identities:
 
 ## 普通客户端与透明转发
 
-客户端安装同一二进制，启动本地隧道；这个命令不读取服务端 config.yaml：
+客户端安装同一二进制，启动本地隧道；这个命令不读取服务端 config.yaml。可参考 `tunnel.example.yaml`，客户端默认读取固定位置 `~/.config/adbgroup/tunnel.yaml`：
+
+```yaml
+server: https://adb-host.example:8443
+group: team-a
+# 可省略；省略时默认为 tunnel.yaml 所在目录
+credentials: /path/to/run/clients/alice
+```
+
+`credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。配置完成后启动命令只有：
 
 ```sh
-adbgroup tunnel -server https://adb-host.example:8443 \
-  -group team-a -listen 127.0.0.1:15037 \
-  -cert run/clients/alice/client.pem -key run/clients/alice/client.key \
-  -ca run/clients/alice/ca.pem
+adbgroup t
+```
+
+不使用配置文件时，远程连接也可以简写为：
+
+```sh
+adbgroup t -s https://adb-host.example:8443 -d run/clients/alice
 
 # 另一终端
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:15037
@@ -82,6 +94,8 @@ adb -s USB_SERIAL_A shell
 adb -s USB_SERIAL_A push app.apk /data/local/tmp/
 adb -s USB_SERIAL_A install app.apk
 ```
+
+`t` 是 `tunnel` 的短名，`-s/-g/-l/-d/-w/-f` 分别是 `-server/-group/-listen/-credentials/-lease/-config`。命令行参数优先于配置文件。没有默认配置文件时，内置默认服务为 `https://127.0.0.1:8443`，默认凭据目录为当前目录，默认本地监听为 `127.0.0.1:15037`。未配置分组且证书身份只授权一个组时会自动选择；身份授权多个组时必须用 `-g` 选择。原有长参数及单独的 `-cert/-key/-ca` 均继续兼容并覆盖目录默认值。
 
 隧道先完成远端认证，再监听本地端口；只接受数值回环地址。本地端口是客户端的可信边界，同机能连接该端口的进程可使用它。服务端会根据证书身份和所选组再次授权每个数据通道，不使用端口号、来源 IP 或隧道 ID 代替身份。
 
@@ -127,10 +141,8 @@ curl --cacert run/clients/alice/ca.pem \
 返回 `201`、规范嵌套资源 `Location` 和 `{"lease": ...}`，不返回密码或 SSH 凭据。轮询 Location，等待 active 后建立显式写隧道：
 
 ```sh
-adbgroup tunnel -server https://adb-host.example:8443 \
-  -group team-a -lease LEASE_ID -listen 127.0.0.1:15039 \
-  -cert run/clients/alice/client.pem -key run/clients/alice/client.key \
-  -ca run/clients/alice/ca.pem
+adbgroup t -s https://adb-host.example:8443 -d run/clients/alice \
+  -g team-a -w LEASE_ID -l 127.0.0.1:15039
 adb -H 127.0.0.1 -P 15039 -s USB_SERIAL_A shell
 ```
 
