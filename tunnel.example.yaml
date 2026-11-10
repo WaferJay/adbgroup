@@ -6,4 +6,5 @@ group: team-a
 # directory containing tunnel.yaml. Relative paths are resolved from there.
 # credentials: credentials/alice
 
-# listen: 127.0.0.1:15037
+# Bare ports bind to 127.0.0.1; full numeric loopback addresses also work.
+# listen: 15037

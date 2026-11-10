@@ -113,17 +113,20 @@ func (c *Client) websocket(ctx context.Context, path string) (*websocket.Conn, e
 	v.SetReadLimit(64 << 10)
 	return v, nil
 }
-func localAddress(address string) error {
+func localAddress(address string) (string, error) {
+	if !strings.Contains(address, ":") {
+		address = net.JoinHostPort("127.0.0.1", address)
+	}
 	h, p, e := net.SplitHostPort(address)
 	if e != nil {
-		return e
+		return "", e
 	}
 	ip := net.ParseIP(h)
 	n, e := strconv.Atoi(p)
 	if ip == nil || !ip.IsLoopback() || e != nil || n < 1 || n > 65535 {
-		return errors.New("listen must be a numeric loopback address with port 1..65535")
+		return "", errors.New("listen must be a port (1..65535) or a numeric loopback address with port 1..65535")
 	}
-	return nil
+	return net.JoinHostPort(ip.String(), strconv.Itoa(n)), nil
 }
 
 func (c *Client) resolveGroup(ctx context.Context, group string) (string, error) {
@@ -150,14 +153,15 @@ func (c *Client) resolveGroup(ctx context.Context, group string) (string, error)
 // Run owns the local ADB listener and every associated data socket. It never
 // reconnects or replays commands after the authenticated control channel fails.
 func (c *Client) Run(parent context.Context, group, lease, address string) error {
-	if err := localAddress(address); err != nil {
+	address, err := localAddress(address)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	c.ctx = ctx
 	setup, stop := context.WithTimeout(ctx, setupTimeout)
-	group, err := c.resolveGroup(setup, group)
+	group, err = c.resolveGroup(setup, group)
 	stop()
 	if err != nil {
 		return err

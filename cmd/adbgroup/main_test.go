@@ -55,14 +55,14 @@ func TestTunnelConfigDefaultPathAndRelativeCredentials(t *testing.T) {
 	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(path, []byte("server: https://adb.example\ngroup: team-a\ncredentials: credentials\n"), 0600); err != nil {
+	if err = os.WriteFile(path, []byte("server: https://adb.example\ngroup: team-a\ncredentials: credentials\nlisten: 15038\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	c, found, err := loadTunnelFile(path)
 	if err != nil || !found {
 		t.Fatalf("load tunnel config: found=%v error=%v", found, err)
 	}
-	if c.Server != "https://adb.example" || c.Group != "team-a" || c.Credentials != filepath.Join(filepath.Dir(path), "credentials") {
+	if c.Server != "https://adb.example" || c.Group != "team-a" || c.Credentials != filepath.Join(filepath.Dir(path), "credentials") || c.Listen != "15038" {
 		t.Fatalf("tunnel config = %+v", c)
 	}
 	if err = os.WriteFile(path, []byte("unknown: true\n"), 0600); err != nil {

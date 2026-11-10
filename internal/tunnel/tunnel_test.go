@@ -480,9 +480,31 @@ func TestWriteTunnelAndSingleUseStreams(t *testing.T) {
 	}
 }
 
+func TestLocalAddressSupportsBarePortsAndRequiresLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+	}{
+		{"15038", "127.0.0.1:15038"},
+		{"1", "127.0.0.1:1"},
+		{"65535", "127.0.0.1:65535"},
+		{"127.0.0.1:15038", "127.0.0.1:15038"},
+		{"[::1]:15038", "[::1]:15038"},
+	} {
+		got, err := localAddress(tc.input)
+		if err != nil || got != tc.want {
+			t.Errorf("localAddress(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
+		}
+	}
+	for _, input := range []string{"", "0", "65536", "-1", "abc", ":15038", "localhost:15038", "0.0.0.0:15038", "[::]:15038", "192.0.2.1:15038", "127.0.0.1:0"} {
+		if _, err := localAddress(input); err == nil {
+			t.Errorf("localAddress(%q) accepted invalid port or non-loopback host", input)
+		}
+	}
+}
+
 func TestClientRejectsUnauthenticatedTLSAndPublicListen(t *testing.T) {
 	h := newHarness(t)
-	if err := localAddress("0.0.0.0:15037"); err == nil {
+	if _, err := localAddress("0.0.0.0:15037"); err == nil {
 		t.Fatal("public client listener accepted")
 	}
 	tr := h.client.http.Transport.(*http.Transport)

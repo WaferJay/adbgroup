@@ -168,7 +168,7 @@ func bindTunnelFlags(flags *flag.FlagSet) *tunnelOptions {
 	flags.StringVar(&o.group, "g", "", "short for -group")
 	flags.StringVar(&o.lease, "lease", "", "active write lease ID")
 	flags.StringVar(&o.lease, "w", "", "short for -lease")
-	flags.StringVar(&o.listen, "listen", o.listen, "local ADB listener")
+	flags.StringVar(&o.listen, "listen", o.listen, "local ADB listener: port or numeric loopback address")
 	flags.StringVar(&o.listen, "l", o.listen, "short for -listen")
 	flags.StringVar(&o.credentials, "credentials", o.credentials, "directory containing client.pem, client.key and ca.pem")
 	flags.StringVar(&o.credentials, "d", o.credentials, "short for -credentials")
