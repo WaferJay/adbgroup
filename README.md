@@ -17,6 +17,10 @@ bin/adbgroup check -config config.yaml
 bin/adbgroup serve -config config.yaml
 ```
 
+不带参数运行会显示 usage；`adbgroup -help`（或 `-h`、`--help`）显示命令列表，
+`adbgroup <命令> -help` 显示对应参数和默认值，例如 `adbgroup t -help`、
+`adbgroup t stop -help`、`adbgroup daemon -help`。帮助命令返回成功，不读取配置或启动服务。
+
 REST API 和 WebSocket 隧道共用 HTTPS 入口。`backend.address` 使用数值回环地址（如
 `127.0.0.1:5038`）时，ADB server 仅监听回环；使用裸端口（如 `5038`）时监听所有
 接口，便于容器端口转发，网关内部仍通过 `127.0.0.1:5038` 连接。原始 ADB 端口不

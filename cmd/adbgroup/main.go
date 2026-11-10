@@ -201,16 +201,26 @@ func canonicalCommand(command string) string {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: adbgroup <check|tunnel (t)|daemon|cert|serve> [options]")
+		printUsage(os.Stderr)
+		return errors.New("a command is required")
 	}
 	command := canonicalCommand(os.Args[1])
+	switch command {
+	case "-h", "-help", "--help":
+		printUsage(os.Stdout)
+		return flag.ErrHelp
+	case "check", "serve", "cert", "tunnel", "daemon":
+	default:
+		printUsage(os.Stderr)
+		return fmt.Errorf("unknown command %q", os.Args[1])
+	}
 	if command == "daemon" {
 		return runDaemonCommand(os.Args[2:], os.Stdout)
 	}
 	if command == "tunnel" && len(os.Args) > 2 && (os.Args[2] == "list" || os.Args[2] == "stop") {
 		return runTunnelCommand(os.Args[2:], os.Stdout)
 	}
-	flags := flag.NewFlagSet(os.Args[1], flag.ContinueOnError)
+	flags := newCommandFlags(command)
 	configDefault := "config.yaml"
 	if command == "tunnel" {
 		var err error
@@ -240,10 +250,8 @@ func run() error {
 	if err := flags.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if command != "check" && command != "serve" && command != "tunnel" && command != "cert" {
-		return errors.New("expected check, tunnel, cert or serve")
-	}
 	if flags.NArg() != 0 {
+		flags.Usage()
 		return errors.New("unexpected positional arguments")
 	}
 	if command == "tunnel" {

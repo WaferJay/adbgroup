@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -68,26 +67,27 @@ func startManagedTunnel(o *tunnelOptions, cert, key, ca string, out io.Writer) e
 }
 
 func runTunnelCommand(args []string, out io.Writer) error {
-	ctx, cancel := commandContext()
-	defer cancel()
+	flags := newCommandFlags("tunnel " + args[0])
+	var jsonOutput bool
+	if args[0] == "list" {
+		flags.BoolVar(&jsonOutput, "json", false, "print JSON instead of a table")
+	}
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if args[0] == "stop" && flags.NArg() != 1 || args[0] == "list" && flags.NArg() != 0 {
+		flags.Usage()
+		return errors.New("unexpected positional arguments")
+	}
 	dir, err := daemon.StateDir()
 	if err != nil {
 		return err
 	}
+	ctx, cancel := commandContext()
+	defer cancel()
 	if args[0] == "stop" {
-		if len(args) != 2 {
-			return errors.New("usage: adbgroup tunnel stop <id>")
-		}
-		_, err := daemon.Call(ctx, dir, daemon.Request{Operation: "stop", ID: args[1]})
+		_, err := daemon.Call(ctx, dir, daemon.Request{Operation: "stop", ID: flags.Arg(0)})
 		return err
-	}
-	flags := flag.NewFlagSet("tunnel list", flag.ContinueOnError)
-	jsonOutput := flags.Bool("json", false, "print JSON instead of a table")
-	if err := flags.Parse(args[1:]); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("usage: adbgroup tunnel list [--json]")
 	}
 	res, err := daemon.Call(ctx, dir, daemon.Request{Operation: "list"})
 	if err != nil && !daemon.Unavailable(err) {
@@ -96,7 +96,7 @@ func runTunnelCommand(args []string, out io.Writer) error {
 	if res.Tunnels == nil {
 		res.Tunnels = []daemon.Tunnel{}
 	}
-	if *jsonOutput {
+	if jsonOutput {
 		encoder := json.NewEncoder(out)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(res.Tunnels)
@@ -114,8 +114,28 @@ func runTunnelCommand(args []string, out io.Writer) error {
 }
 
 func runDaemonCommand(args []string, out io.Writer) error {
-	if len(args) != 1 {
-		return errors.New("usage: adbgroup daemon <start|status|stop>")
+	flags := newCommandFlags("daemon")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	args = flags.Args()
+	if len(args) == 0 {
+		flags.Usage()
+		return errors.New("a daemon command is required")
+	}
+	switch args[0] {
+	case "start", "status", "stop", "run":
+	default:
+		flags.Usage()
+		return fmt.Errorf("unknown daemon command %q", args[0])
+	}
+	flags = newCommandFlags("daemon " + args[0])
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		flags.Usage()
+		return errors.New("unexpected positional arguments")
 	}
 	dir, err := daemon.StateDir()
 	if err != nil {
@@ -145,8 +165,6 @@ func runDaemonCommand(args []string, out io.Writer) error {
 		// and socket to be released before a subsequent start.
 		return daemon.WaitStopped(ctx, dir)
 	case "status":
-	default:
-		return errors.New("usage: adbgroup daemon <start|status|stop>")
 	}
 	res, err := daemon.Call(ctx, dir, daemon.Request{Operation: "status"})
 	if daemon.Unavailable(err) {
