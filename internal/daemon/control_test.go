@@ -122,9 +122,9 @@ func TestConcurrentEnsureDetachedProcessAndStaleSocket(t *testing.T) {
 	if status.PID == os.Getpid() || status.PID == 0 {
 		t.Fatal("daemon was not a separate process")
 	}
-	sid, err := syscall.Getsid(status.PID)
-	if err != nil || sid != status.PID {
-		t.Fatalf("daemon is not detached: sid=%d pid=%d err=%v", sid, status.PID, err)
+	sid, _, errno := syscall.Syscall(syscall.SYS_GETSID, uintptr(status.PID), 0, 0)
+	if errno != 0 || int(sid) != status.PID {
+		t.Fatalf("daemon is not detached: sid=%d pid=%d err=%v", sid, status.PID, errno)
 	}
 	st, err := os.Stat(SocketPath(dir))
 	if err != nil || st.Mode().Perm() != 0600 {
