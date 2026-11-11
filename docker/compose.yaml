@@ -21,8 +21,9 @@ services:
       - type: bind
         source: /dev/bus/usb
         target: /dev/bus/usb
-    # USB device nodes normally belong to the host's plugdev group. Set
-    # USB_GID to that group's numeric GID before starting the container.
+    # Install 70-android-adb.rules on the host to grant plugdev access to
+    # new ADB devices. Set USB_GID to that group's actual numeric GID; adding
+    # the group alone does not grant read/write access to USB device nodes.
     group_add:
       - "${USB_GID:-46}"
     device_cgroup_rules:

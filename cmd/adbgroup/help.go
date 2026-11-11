@@ -14,6 +14,8 @@ Commands:
   serve          Start the ADB gateway server
   cert           Issue client credentials
   tunnel (t)     Start or manage local ADB tunnels
+  groups (g)     List authorized groups
+  devices (d)    List devices and lock status in a group
   daemon         Manage the background tunnel daemon
 
 Options:
@@ -27,9 +29,11 @@ var commandHelp = map[string]struct {
 	syntax      string
 	description string
 }{
-	"check": {"check [options]", "Validate the server configuration without starting the gateway."},
-	"serve": {"serve [options]", "Start the HTTPS API and ADB gateway server."},
-	"cert":  {"cert [options] -user <name> -out <directory>", "Issue client credentials. Use -identity instead of -user for an explicit identity URI."},
+	"check":   {"check [options]", "Validate the server configuration without starting the gateway."},
+	"serve":   {"serve [options]", "Start the HTTPS API and ADB gateway server."},
+	"cert":    {"cert [options] -user <name> -out <directory>", "Issue client credentials. Use -identity instead of -user for an explicit identity URI."},
+	"groups":  {"groups [options]", "List authorized groups. Alias: g."},
+	"devices": {"devices [options]", "List devices and lock status in the selected group. Alias: d."},
 	"tunnel": {"tunnel [options]\n       adbgroup tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
 Use -no-daemon to run in the foreground.
 

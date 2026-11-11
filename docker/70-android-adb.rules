@@ -1,0 +1,13 @@
+# Android ADB USB device permissions for Linux hosts.
+# Create the plugdev group and add users that need ADB access to it.
+# Install as /etc/udev/rules.d/70-android-adb.rules.
+ACTION!="add|change|bind", GOTO="android_adb_end"
+SUBSYSTEM!="usb", GOTO="android_adb_end"
+ENV{DEVTYPE}!="usb_device", GOTO="android_adb_end"
+
+# Read all USB interface descriptors, including those on composite devices.
+ENV{ID_USB_INTERFACES}=="", IMPORT{builtin}="usb_id"
+# ADB uses vendor-specific class ff, subclass 42, protocol 01.
+ENV{ID_USB_INTERFACES}=="*:ff4201:*", GROUP="plugdev", MODE="0660"
+
+LABEL="android_adb_end"

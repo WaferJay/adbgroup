@@ -136,8 +136,8 @@ func (c *Client) resolveGroup(ctx context.Context, group string) (string, error)
 	if group != "" {
 		return group, nil
 	}
-	var groups []gateway.Group
-	if err := c.request(ctx, "GET", "/v1/groups", nil, &groups); err != nil {
+	groups, err := c.ListGroups(ctx)
+	if err != nil {
 		return "", fmt.Errorf("discover groups: %w", err)
 	}
 	if len(groups) == 0 {

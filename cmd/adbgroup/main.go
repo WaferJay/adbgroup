@@ -160,21 +160,26 @@ func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
 	}
 }
 
-func bindTunnelFlags(flags *flag.FlagSet) *tunnelOptions {
+func bindClientFlags(flags *flag.FlagSet) *tunnelOptions {
 	o := &tunnelOptions{server: defaultTunnelServer, listen: "127.0.0.1:15037", credentials: "."}
 	flags.StringVar(&o.server, "server", o.server, "HTTPS server origin")
 	flags.StringVar(&o.server, "s", o.server, "short for -server")
 	flags.StringVar(&o.group, "group", "", "group (auto-selected when only one is authorized)")
 	flags.StringVar(&o.group, "g", "", "short for -group")
-	flags.StringVar(&o.lease, "lease", "", "active write lease ID")
-	flags.StringVar(&o.lease, "w", "", "short for -lease")
-	flags.StringVar(&o.listen, "listen", o.listen, "local ADB listener: port or numeric loopback address")
-	flags.StringVar(&o.listen, "l", o.listen, "short for -listen")
 	flags.StringVar(&o.credentials, "credentials", o.credentials, "directory containing client.pem, client.key and ca.pem")
 	flags.StringVar(&o.credentials, "d", o.credentials, "short for -credentials")
 	flags.StringVar(&o.cert, "cert", "", "client certificate (defaults to CREDENTIALS/client.pem)")
 	flags.StringVar(&o.key, "key", "", "client private key (defaults to CREDENTIALS/client.key)")
 	flags.StringVar(&o.ca, "ca", "", "server CA trust bundle (defaults to CREDENTIALS/ca.pem)")
+	return o
+}
+
+func bindTunnelFlags(flags *flag.FlagSet) *tunnelOptions {
+	o := bindClientFlags(flags)
+	flags.StringVar(&o.lease, "lease", "", "active write lease ID")
+	flags.StringVar(&o.lease, "w", "", "short for -lease")
+	flags.StringVar(&o.listen, "listen", o.listen, "local ADB listener: port or numeric loopback address")
+	flags.StringVar(&o.listen, "l", o.listen, "short for -listen")
 	return o
 }
 
@@ -193,8 +198,13 @@ func (o *tunnelOptions) credentialFiles() (string, string, string) {
 }
 
 func canonicalCommand(command string) string {
-	if command == "t" {
+	switch command {
+	case "t":
 		return "tunnel"
+	case "g":
+		return "groups"
+	case "d":
+		return "devices"
 	}
 	return command
 }
@@ -209,7 +219,7 @@ func run() error {
 	case "-h", "-help", "--help":
 		printUsage(os.Stdout)
 		return flag.ErrHelp
-	case "check", "serve", "cert", "tunnel", "daemon":
+	case "check", "serve", "cert", "tunnel", "groups", "devices", "daemon":
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", os.Args[1])
@@ -220,9 +230,10 @@ func run() error {
 	if command == "tunnel" && len(os.Args) > 2 && (os.Args[2] == "list" || os.Args[2] == "stop") {
 		return runTunnelCommand(os.Args[2:], os.Stdout)
 	}
+	clientCommand := command == "tunnel" || command == "groups" || command == "devices"
 	flags := newCommandFlags(command)
 	configDefault := "config.yaml"
-	if command == "tunnel" {
+	if clientCommand {
 		var err error
 		configDefault, err = defaultTunnelConfig()
 		if err != nil {
@@ -233,10 +244,16 @@ func run() error {
 	var user, identity, out, caKey, caCert *string
 	var days *int
 	var tunnelFlags *tunnelOptions
+	var jsonOutput bool
 	var noDaemon bool
-	if command == "tunnel" {
-		tunnelFlags = bindTunnelFlags(flags)
-		flags.BoolVar(&noDaemon, "no-daemon", false, "run the tunnel in the foreground")
+	if clientCommand {
+		if command == "tunnel" {
+			tunnelFlags = bindTunnelFlags(flags)
+			flags.BoolVar(&noDaemon, "no-daemon", false, "run the tunnel in the foreground")
+		} else {
+			tunnelFlags = bindClientFlags(flags)
+			flags.BoolVar(&jsonOutput, "json", false, "print JSON instead of a table")
+		}
 		flags.StringVar(file, "f", configDefault, "short for -config")
 	}
 	if command == "cert" {
@@ -254,27 +271,31 @@ func run() error {
 		flags.Usage()
 		return errors.New("unexpected positional arguments")
 	}
-	if command == "tunnel" {
+	if clientCommand {
 		configured, found, err := loadTunnelFile(*file)
 		if err != nil {
-			return fmt.Errorf("load tunnel config %s: %w", *file, err)
+			return fmt.Errorf("load client config %s: %w", *file, err)
 		}
 		if !found && flagWasSet(flags, "config", "f") {
-			return fmt.Errorf("tunnel config %s does not exist", *file)
+			return fmt.Errorf("client config %s does not exist", *file)
 		}
 		if found {
 			tunnelFlags.applyFile(configured, flags)
 		}
 		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
-		if !noDaemon {
+		if command == "tunnel" && !noDaemon {
 			return startManagedTunnel(tunnelFlags, clientCert, clientKey, serverCA, os.Stdout)
 		}
 		client, err := tunnel.NewClient(tunnelFlags.server, clientCert, clientKey, serverCA)
 		if err != nil {
 			return err
 		}
+		defer client.CloseIdleConnections()
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		if command != "tunnel" {
+			return runQuery(ctx, client, command, tunnelFlags.group, jsonOutput, os.Stdout)
+		}
 		return client.Run(ctx, tunnelFlags.group, tunnelFlags.lease, tunnelFlags.listen)
 	}
 	cfg, err := load(*file)

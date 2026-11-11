@@ -21,7 +21,7 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		want []string
 		fail bool
 	}{
-		{"help", []string{"-help"}, []string{"Usage: adbgroup <command>", "tunnel (t)", "daemon"}, false},
+		{"help", []string{"-help"}, []string{"Usage: adbgroup <command>", "tunnel (t)", "groups (g)", "devices (d)", "daemon"}, false},
 		{"short help", []string{"-h"}, []string{"Usage: adbgroup <command>"}, false},
 		{"long help", []string{"--help"}, []string{"Usage: adbgroup <command>"}, false},
 		{"check", []string{"check", "-help"}, []string{"Usage: adbgroup check", "-config", "config.yaml"}, false},
@@ -29,7 +29,11 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		{"cert", []string{"cert", "-help"}, []string{"Usage: adbgroup cert", "-user", "-identity", "-out", "-days"}, false},
 		{"tunnel", []string{"tunnel", "-help"}, []string{"Usage: adbgroup tunnel", "stop <id>", "-no-daemon", "-listen"}, false},
 		{"tunnel alias", []string{"t", "-h"}, []string{"Usage: adbgroup tunnel", "-listen"}, false},
-		{"missing config", []string{"tunnel", "-config", "missing.yaml", "-help"}, []string{"Usage: adbgroup tunnel"}, false},
+		{"groups", []string{"groups", "-help"}, []string{"Usage: adbgroup groups", "-json", "-server"}, false},
+		{"groups alias", []string{"g", "--help"}, []string{"Usage: adbgroup groups", "-json"}, false},
+		{"devices", []string{"devices", "-help"}, []string{"Usage: adbgroup devices", "-group", "-json"}, false},
+		{"devices alias", []string{"d", "-help"}, []string{"Usage: adbgroup devices", "-group"}, false},
+		{"missing config", []string{"groups", "-config", "missing.yaml", "-help"}, []string{"Usage: adbgroup groups"}, false},
 		{"tunnel list", []string{"tunnel", "list", "-help"}, []string{"Usage: adbgroup tunnel list", "-json"}, false},
 		{"tunnel stop", []string{"tunnel", "stop", "-help"}, []string{"Usage: adbgroup tunnel stop <id>"}, false},
 		{"tunnel stop alias", []string{"t", "stop", "--help"}, []string{"Usage: adbgroup tunnel stop <id>"}, false},
@@ -40,7 +44,7 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		{"no command", nil, []string{"Usage: adbgroup <command>", "a command is required"}, true},
 		{"unknown command", []string{"unknown"}, []string{"Usage: adbgroup <command>", `unknown command`}, true},
 		{"unknown flag", []string{"check", "-unknown"}, []string{"Usage: adbgroup check", "flag provided but not defined"}, true},
-		{"extra argument", []string{"check", "extra"}, []string{"Usage: adbgroup check", "unexpected positional arguments"}, true},
+		{"extra argument", []string{"devices", "extra"}, []string{"Usage: adbgroup devices", "unexpected positional arguments"}, true},
 		{"missing tunnel ID", []string{"t", "stop"}, []string{"Usage: adbgroup tunnel stop <id>"}, true},
 		{"extra list argument", []string{"t", "list", "extra"}, []string{"Usage: adbgroup tunnel list"}, true},
 		{"missing daemon command", []string{"daemon"}, []string{"Usage: adbgroup daemon", "a daemon command is required"}, true},

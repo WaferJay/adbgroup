@@ -57,17 +57,74 @@ sudo install -d -o 10001 -g 10001 -m 0700 data
 
 ## USB 权限
 
-容器需要访问 `/dev/bus/usb`。先确认相应 USB 设备节点的组，并把数字 GID 传给
-Compose：
+容器需要同时具备 USB 设备的 cgroup 访问权和设备节点的文件读写权限。Compose
+已通过整个 `/dev/bus/usb` 目录的 bind mount 和 `c 189:* rmw` 规则支持热插拔；
+非 root 进程能否打开新设备，还取决于宿主机 udev 为新节点设置的组和权限。
+
+在 **Linux Docker 宿主机** 上、此目录内执行：
 
 ```sh
-ls -ln /dev/bus/usb/*/*
+getent group plugdev || sudo groupadd --system plugdev
+sudo install -o root -g root -m 0644 70-android-adb.rules \
+  /etc/udev/rules.d/70-android-adb.rules
+sudo udevadm control --reload-rules
 export USB_GID="$(getent group plugdev | cut -d: -f3)"
 ```
 
-如果发行版没有 `plugdev`，请使用 udev 规则为 Android USB 设备设置一个专用组，
-然后将该组的数字 GID 赋给 `USB_GID`。Compose 默认值 `46` 只适用于使用该 GID
-作为 `plugdev` 的系统。udev 规则必须在宿主机配置；容器内不运行 udev。
+`70-android-adb.rules` 是通用的 Linux ADB USB 权限规则，可用于宿主机直接运行
+ADB 或容器部署。规则通过 ADB USB 接口特征 `ff4201` 匹配设备，为设备节点设置 `plugdev` 组和
+`0660` 权限，也支持包含 ADB 接口的复合 USB 设备及后续接入的新厂商设备。手机
+需要开启 USB 调试；规则不匹配没有 ADB 接口的普通 USB 设备或 fastboot 模式。
+独立部署时，也应将本目录的规则文件一起复制到宿主机。
+
+把上面得到的数字 GID 写入本目录 `.env` 的 `USB_GID=数字`，后续 Compose 命令
+即可复用；若使用已有 USB 专用组，应同时修改规则的 `GROUP` 和 `USB_GID`。
+Compose 默认值 `46` 只适用于宿主机 `plugdev` 确实使用该 GID 的情况。容器与
+宿主机按数字 GID 判断权限，组名可以不同。仅在宿主机给登录用户加入 `plugdev`
+不会改变容器进程的组。
+
+已有容器更改 `USB_GID` 后需要重建，`docker compose restart` 不会更新附加组：
+
+```sh
+docker compose up -d --no-build --force-recreate
+```
+
+重建容器会中断当前连接。若容器已经包含正确的数字 GID，只需安装和应用 udev
+规则，无需重建容器。
+
+重新插拔报错的那台设备，使 udev 为新节点应用规则。只执行 `--reload-rules`
+不会修改已经存在的设备节点；如需保留连接，可以针对该设备触发规则，下面路径
+需要替换为它当前的 USB 节点：
+
+```sh
+USB_NODE=/dev/bus/usb/001/005
+sudo udevadm trigger --action=change \
+  "/sys$(udevadm info --query=path --name="$USB_NODE")"
+sudo udevadm settle
+```
+
+若触发规则后 ADB 仍保留 `no permissions` 状态，只重新插拔该设备，让 ADB
+重新枚举。
+
+检查容器的实际身份、节点权限和专用 ADB server 的设备状态：
+
+```sh
+docker compose exec adbgroup id
+docker compose exec adbgroup sh -c 'ls -ln /dev/bus/usb/*/*'
+docker compose exec adbgroup adb -P 5038 devices -l
+```
+
+目标节点应有组读写权限（如 `crw-rw----`），其数字 GID 应出现在容器 `id`
+输出的组列表中。`no permissions (missing udev rules? user is in the plugdev
+group)` 仍然表示 ADB 无法打开 USB 节点，不能据此认定节点权限正确。若状态变为
+`unauthorized`，则在手机上确认 USB 调试授权；这与文件权限是不同的步骤。
+
+手动 `chmod` 只对当前节点有效，重新插拔后会失效。udev 规则必须在宿主机配置；
+容器内不运行 udev。修复不需要重建镜像；规则和容器附加组配置完成后，后续新增
+设备或再次插拔设备无需重建容器或重启 ADB server。
+
+参考：[Android Linux 设备权限说明](https://developer.android.com/studio/run/device)、
+[Docker 附加组说明](https://docs.docker.com/engine/containers/run/#additional-groups)。
 
 rootless Docker 通常不能直接授予 USB 字符设备访问权。此部署方式应使用能够配置
 设备 cgroup 规则的 Docker Engine。
