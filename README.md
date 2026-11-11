@@ -1,14 +1,16 @@
-# ADB 分组网关
+# ADB Group Gateway
 
-Linux USB 设备分组、统一 mTLS 身份认证、原生 ADB 访问和物理设备全局读写锁。每个用户持有自己的客户端证书，API 和隧道共用证书及授权配置。team 是虚拟分组，不需要 Linux 账号、系统 sshd 或 SSH 公钥。
+**English** | [简体中文](README.zh-CN.md)
+
+Group Linux USB devices with unified mTLS authentication, native ADB access, and global read/write locks on physical devices. Each user has a client certificate shared by the API and tunnels, with a single authorization configuration. A team is a virtual group; it requires no Linux account, system sshd, or SSH public key.
 
 ```text
-原生 adb / Appium → 本地 adbgroup tunnel → mTLS HTTPS → 分组与锁 → 常驻 ADB server → USB
+Native adb / Appium → local adbgroup tunnel → mTLS HTTPS → groups and locks → persistent ADB server → USB
 ```
 
-## 构建与服务启动
+## Build and start the server
 
-需要 Go 1.26+、近期 Android Platform Tools 和 Linux USB/udev 权限。
+Requires Go 1.26+, recent Android Platform Tools, and Linux USB/udev permissions.
 
 ```sh
 go build -o bin/adbgroup ./cmd/adbgroup
@@ -17,23 +19,25 @@ bin/adbgroup check -config config.yaml
 bin/adbgroup serve -config config.yaml
 ```
 
-不带参数运行会显示 usage；`adbgroup -help`（或 `-h`、`--help`）显示命令列表，
-`adbgroup <命令> -help` 显示对应参数和默认值，例如 `adbgroup t -help`、
-`adbgroup t stop -help`、`adbgroup daemon -help`。帮助命令返回成功，不读取配置或启动服务。
+Running without arguments displays usage. `adbgroup -help` (or `-h`, `--help`) lists commands.
+Use `adbgroup <command> -help` to see flags and defaults, for example `adbgroup t -help`,
+`adbgroup t stop -help`, or `adbgroup daemon -help`. Help commands exit successfully without
+reading configuration or starting services.
 
-REST API 和 WebSocket 隧道共用 HTTPS 入口。`backend.address` 使用数值回环地址（如
-`127.0.0.1:5038`）时，ADB server 仅监听回环；使用裸端口（如 `5038`）时监听所有
-接口，便于容器端口转发，网关内部仍通过 `127.0.0.1:5038` 连接。原始 ADB 端口不
-经过 mTLS、分组授权和设备锁，只应显式映射到宿主机回环地址，不要向远程用户开放。
+The REST API and WebSocket tunnels share one HTTPS endpoint. When `backend.address` is a
+numeric loopback address such as `127.0.0.1:5038`, the ADB server listens only on loopback.
+A bare port such as `5038` makes it listen on all interfaces for container port forwarding;
+the gateway still connects internally through `127.0.0.1:5038`. The raw ADB port bypasses
+mTLS, group authorization, and device locks. Map it explicitly to the host's loopback
+address only; do not expose it to remote users.
 
-`backend.manage: true` 使用专用端口启动常驻 ADB server；端口已有进程时拒绝启动。单台设备拔插不重启后端，其他设备继续运行。后台 ADB server 故障仍会中断所有设备连接。
+`backend.manage: true` starts a persistent ADB server on a dedicated port and refuses to start if another process already uses that port. Unplugging or reconnecting one device does not restart the backend, so other devices keep running. An ADB server failure still interrupts all device connections.
 
-USB 枚举兼容原生后端的 `usb:` 路径和部分 libusb 版本不带前缀的总线/端口路径，继续排除网络设备和模拟器。
+USB enumeration supports both the native backend's `usb:` paths and the bus/port paths without that prefix used by some libusb versions. Network devices and emulators remain excluded.
 
-## 证书
+## Certificates
 
-
-省略 `api.certificate`、`api.key`、`api.client_ca` 三项时，首次启动自动在 `pki.directory`（默认配置目录下的 `run/pki`）生成 CA 和服务端凭据，后续复用。三项只能全部省略或全部指定。
+If `api.certificate`, `api.key`, and `api.client_ca` are all omitted, the first startup generates a CA and server credentials in `pki.directory` (default: `run/pki` under the configuration directory). Later startups reuse them. Specify either all three settings or none.
 
 ```yaml
 api:
@@ -43,77 +47,77 @@ pki:
   server_names: [adb-host.example, 192.168.1.10]
 ```
 
-生成文件为 `ca.pem`、`ca.key`、`server.pem`、`server.key`；目录权限 0700、文件 0600。CA 默认有效 10 年，服务端证书默认 2 年且不超过 CA 到期时间。SAN 包含 localhost、回环 IP、主机名和当前本机接口 IP；首次初始化前用 `server_names` 补充公网或 NAT 域名/IP。
+The generated files are `ca.pem`, `ca.key`, `server.pem`, and `server.key`. Directory permissions are `0700`; file permissions are `0600`. The CA is valid for 10 years by default. The server certificate is valid for 2 years by default and never outlives the CA. SANs include localhost, loopback IPs, the hostname, and current local interface IPs. Add public or NAT-facing domain names and IPs through `server_names` before the first initialization.
 
-不会因为重复启动、网络变化或新增 SAN 自动覆盖证书。凭据部分缺失、损坏或过期会报错，需管理员恢复或更新。替换服务端证书或 CA 信任文件后需要冷重启。
+Repeated startups, network changes, or additional SANs do not overwrite certificates automatically. Incomplete, damaged, or expired credentials produce an error and require an administrator to restore or renew them. Replacing the server certificate or CA trust file requires a full restart.
 
-管理员签发用户凭据：
+Administrators can issue user credentials:
 
 ```sh
 bin/adbgroup cert -config config.yaml -user alice -out run/clients/alice
-# 也可自定义身份与有效期
+# Custom identity and validity period
 bin/adbgroup cert -config config.yaml \
   -identity spiffe://adbgroup/ci-runner -days 90 -out run/clients/ci-runner
 ```
 
-输出目录包含 `client.pem`、`client.key`、`ca.pem`，不会导出 CA 私钥；已有输出目录会被拒绝。`-out` 相对命令当前目录，PKI 文件路径相对配置文件目录。CLI 可在首次启动前初始化默认 PKI，不启动监听或 ADB。
+The output directory contains `client.pem`, `client.key`, and `ca.pem`; the CA private key is never exported. An existing output directory is rejected. `-out` is relative to the command's working directory, while PKI paths are relative to the configuration file's directory. The CLI can initialize the default PKI before the first server startup without starting listeners or ADB.
 
-`-user alice` 对应 `spiffe://adbgroup/alice`。签发不会自动授予权限，把身份加入配置后发送 SIGHUP：
+`-user alice` maps to `spiffe://adbgroup/alice`. Issuing a certificate does not grant access automatically. Add the identity to the configuration, then send SIGHUP:
 
 ```yaml
 identities:
   "spiffe://adbgroup/alice": [team-a]
 ```
 
-同一 CA 新签发用户证书无需重启；服务端要求证书包含唯一 URI SAN，URI 必须出现在授权配置中。有效期允许 1–3650 天，默认 365 天，不超过签发 CA 的剩余期限。
+New user certificates issued by the same CA do not require a restart. The server requires exactly one URI SAN in the certificate, and that URI must appear in the authorization configuration. Validity can be 1–3650 days, defaults to 365 days, and cannot exceed the issuing CA's remaining lifetime.
 
-企业 PKI 显式配置 API 的全部三个文件，签发时用 `-ca-key` 和可选的 `-ca-cert` 指定可信签发者。导出的 `ca.pem` 是客户端签发 CA 链；若 HTTPS 服务端由另一 CA 签发，隧道的 `-ca` 和 curl 的 `--cacert` 必须使用服务端 CA 信任文件。
+For an enterprise PKI, explicitly configure all three API credential files. Use `-ca-key` and optionally `-ca-cert` to select a trusted issuer when issuing client certificates. The exported `ca.pem` contains the client certificate's issuing CA chain. If a different CA signs the HTTPS server certificate, the tunnel's `-ca` and curl's `--cacert` must use the server CA trust file.
 
-## 普通客户端与透明转发
+## Standard clients and transparent forwarding
 
-客户端安装同一二进制，启动本地隧道；这个命令不读取服务端 config.yaml。可参考 `tunnel.example.yaml`，客户端默认读取固定位置 `~/.config/adbgroup/tunnel.yaml`：
+Install the same binary on the client and start a local tunnel. This command does not read the server's `config.yaml`. See `tunnel.example.yaml`; the client reads `~/.config/adbgroup/tunnel.yaml` by default:
 
 ```yaml
 server: https://adb-host.example:8443
 group: team-a
-# 可省略；省略时默认为 tunnel.yaml 所在目录
+# Optional; defaults to the directory containing tunnel.yaml
 credentials: /path/to/run/clients/alice
 ```
 
-`credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。配置完成后启动命令只有：
+The `credentials` directory uses the fixed filenames produced by the `cert` command: `client.pem`, `client.key`, and `ca.pem`. You can also place these files next to `tunnel.yaml` and omit `credentials`. Once configured, start the tunnel with:
 
 ```sh
 adbgroup t
 ```
 
-`t` 默认自动启动当前用户的后台 daemon，将 tunnel 交给它管理，等本地监听就绪后返回。关闭终端后 tunnel 继续运行。同一 daemon 可以管理多个服务端或分组的 tunnel，每条 tunnel 需要使用不同的本地监听端口：
+By default, `t` automatically starts a background daemon for the current user, hands the tunnel to it, and returns once the local listener is ready. The tunnel keeps running after the terminal closes. One daemon can manage tunnels to multiple servers or groups, with a different local listening port for each tunnel:
 
 ```sh
 adbgroup t -g team-a -l 15037
 adbgroup t -g team-b -l 15038
-adbgroup t list             # ID、服务端、分组、监听地址、状态、最近错误
+adbgroup t list             # ID, server, group, listener, status, latest error
 adbgroup t list --json
-adbgroup t stop <id>        # 停止并移除指定 tunnel
+adbgroup t stop <id>        # Stop and remove a tunnel
 
 adbgroup daemon status
-adbgroup daemon start      # 可选；t 命令会自动启动
-adbgroup daemon stop       # 等待全部 tunnel 清理后退出
+adbgroup daemon start      # Optional; t starts it automatically
+adbgroup daemon stop       # Exit after all tunnels finish cleanup
 
-adbgroup t --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
+adbgroup t --no-daemon      # Run in the foreground; exit with Ctrl-C
 ```
 
-启动成功会输出 tunnel ID 和 `export ADB_SERVER_SOCKET=tcp:127.0.0.1:端口`。在使用 adb/Appium 的终端设置对应的环境变量即可选择 tunnel。重复提交相同参数会复用已有 tunnel；同一监听地址使用不同配置会报冲突，需要先停止旧 tunnel。
+A successful startup prints the tunnel ID and `export ADB_SERVER_SOCKET=tcp:127.0.0.1:<port>`. Set that environment variable in the terminal running adb or Appium to select the tunnel. Submitting the same parameters again reuses an existing tunnel. Using different settings for the same listening address causes a conflict; stop the old tunnel first.
 
-连接断开时只影响该 tunnel，其状态变为 `failed`，原有 forward/reverse 规则清空；再次提交相同启动命令可手动恢复，规则需要重新创建。daemon 不自动重连、不保存 tunnel 配置，重启后需要重新提交启动命令。
+A disconnection affects only that tunnel: its status becomes `failed`, and its forward/reverse rules are cleared. Run the same startup command again to recover manually, then recreate the rules. The daemon does not reconnect automatically or persist tunnel configurations; submit the startup commands again after it restarts.
 
-daemon 支持 macOS/Linux，控制 socket 位于 `~/.config/adbgroup/daemon/control.sock`，目录权限为 `0700`，socket 权限为 `0600`；日志写入同目录的 `daemon.log`。本地控制协议版本不兼容时会报错，应先使用旧版本命令停止 daemon，再使用新版本启动。首版不安装系统服务或配置开机自启。
+The daemon supports macOS and Linux. Its control socket is `~/.config/adbgroup/daemon/control.sock`, with directory permissions `0700` and socket permissions `0600`. Logs go to `daemon.log` in the same directory. An incompatible local control protocol version produces an error; stop the daemon with the old binary before starting it with the new one. The initial release does not install a system service or configure startup at boot.
 
-不使用配置文件时，远程连接也可以简写为：
+Without a configuration file, a remote connection can also be started with:
 
 ```sh
 adbgroup t -s https://adb-host.example:8443 -d run/clients/alice
 
-# 另一终端
+# In another terminal
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:15037
 adb devices -l
 adb -s USB_SERIAL_A shell
@@ -121,56 +125,56 @@ adb -s USB_SERIAL_A push app.apk /data/local/tmp/
 adb -s USB_SERIAL_A install app.apk
 ```
 
-`t` 是 `tunnel` 的短名，`-s/-g/-l/-d/-w/-f` 分别是 `-server/-group/-listen/-credentials/-lease/-config`。命令行参数优先于配置文件。没有默认配置文件时，内置默认服务为 `https://127.0.0.1:8443`，默认凭据目录为当前目录，默认本地监听为 `127.0.0.1:15037`。未配置分组且证书身份只授权一个组时会自动选择；身份授权多个组时必须用 `-g` 选择。原有长参数及单独的 `-cert/-key/-ca` 均继续兼容并覆盖目录默认值。
+`t` is an alias for `tunnel`. The short flags `-s/-g/-l/-d/-w/-f` correspond to `-server/-group/-listen/-credentials/-lease/-config`. Command-line flags override the configuration file. Without a default configuration file, the built-in server is `https://127.0.0.1:8443`, the credentials directory is the current directory, and the local listener is `127.0.0.1:15037`. If no group is configured and the certificate identity is authorized for exactly one group, that group is selected automatically. Use `-g` when multiple groups are authorized. Existing long flags and individual `-cert/-key/-ca` flags remain supported; the latter override credential directory defaults.
 
-`-l 15038` 等价于 `-l 127.0.0.1:15038`，配置文件同样支持 `listen: 15038`；完整 IPv4/IPv6 数值回环地址也可继续使用。
+`-l 15038` is equivalent to `-l 127.0.0.1:15038`. The configuration file also accepts `listen: 15038`. Full numeric IPv4/IPv6 loopback addresses remain supported.
 
-`groups/g` 和 `devices/d` 直接查询 REST API，使用相同的默认客户端配置及 mTLS 凭据，无需启动隧道：
+`groups/g` and `devices/d` query the REST API directly, using the same default client configuration and mTLS credentials without starting a tunnel:
 
 ```sh
-adbgroup g                  # 所有授权组、设备数量，* 标记默认组
-adbgroup d                  # 默认组的设备、连接状态和锁状态
-adbgroup d -g team-b         # 指定组的设备，包括离线设备
-adbgroup g --json            # 组列表 JSON
-adbgroup d -g team-b --json  # 设备列表 JSON，便于脚本处理
+adbgroup g                  # Authorized groups and device counts; * marks the default
+adbgroup d                  # Default group's devices, connection states, and lock states
+adbgroup d -g team-b         # Devices in a specific group, including offline devices
+adbgroup g --json            # Group list as JSON
+adbgroup d -g team-b --json  # Device list as JSON for scripts
 ```
 
-查询命令支持 `-s/-g/-d/-f` 及对应长参数、`-cert/-key/-ca`，命令行覆盖配置文件。设备查询未指定或配置分组时，只在有且仅有一个授权组的情况下自动选择；多个组时需用 `-g` 指定。查询失败返回非零退出码，错误写入 stderr，JSON 结果单独写入 stdout。
+Query commands accept `-s/-g/-d/-f`, their long forms, and `-cert/-key/-ca`. Command-line flags override the configuration file. If no group is specified or configured for a device query, automatic selection requires exactly one authorized group; otherwise, specify `-g`. Failed queries return a nonzero exit code, errors go to stderr, and JSON results go separately to stdout.
 
-隧道先完成远端认证，再监听本地端口；只接受数值回环地址。本地端口是客户端的可信边界，同机能连接该端口的进程可使用它。服务端会根据证书身份和所选组再次授权每个数据通道，不使用端口号、来源 IP 或隧道 ID 代替身份。
+The tunnel authenticates with the remote server before opening the local listener and accepts only numeric loopback addresses. The local port is the client's trust boundary: any process on the same machine that can connect to it can use it. The server reauthorizes every data channel against the certificate identity and selected group. Port numbers, source IPs, and tunnel IDs do not replace identity.
 
-普通设备连接自动获取读锁，结束时释放。读锁表示并发调度资格，允许运行会修改设备的命令；多连接命令不保证整体原子性。写锁等待或生效期间，新普通操作默认等待最多 30 秒，最多排队 128 个请求；长时间 logcat 等现有流可能使写锁申请超时。
+Standard device connections acquire a read lock automatically and release it when they end. A read lock grants concurrent scheduling access and allows commands that modify the device; commands using multiple connections are not guaranteed to be atomic as a whole. While a write lock is pending or active, new standard operations wait up to 30 seconds by default, with a queue of at most 128 requests. Existing long-lived streams such as logcat can cause a write-lock request to time out.
 
-支持原生 `adb -s USB_SERIAL_A wait-for-device`：设备未连接、offline 或 unauthorized 时持续等待，进入 `device` 状态后返回；也可使用 `wait-for-recovery`、`wait-for-rescue`、`wait-for-sideload`、`wait-for-bootloader` 和 `wait-for-disconnect`。等待仅观察当前分组内的设备状态，不获取读锁，不受读锁等待超时限制；多设备时需用 `-s` 或 `-t` 指定目标。USB 的 `wait-for-disconnect` 在设备从列表消失时完成，单纯 offline 不算断开。Ctrl-C、隧道关闭或撤权会结束等待。
+Native `adb -s USB_SERIAL_A wait-for-device` is supported. It waits while the device is disconnected, offline, or unauthorized, then returns when the device enters the `device` state. Other supported commands are `wait-for-recovery`, `wait-for-rescue`, `wait-for-sideload`, `wait-for-bootloader`, and `wait-for-disconnect`. Waiting observes only devices in the current group, takes no read lock, and is not subject to the read-lock wait timeout. With multiple devices, select a target using `-s` or `-t`. For USB devices, `wait-for-disconnect` completes when the device disappears from the list; going offline alone does not count as a disconnect. Ctrl-C, tunnel closure, or authorization revocation ends the wait.
 
-forward/reverse 的主机端现在都位于用户电脑：
+The host side of both forward and reverse runs on the user's computer:
 
 ```sh
 adb -s USB_SERIAL_A forward tcp:8080 tcp:80
-# 访问用户电脑 127.0.0.1:8080，即访问设备 TCP 80
+# Connect to 127.0.0.1:8080 on your computer to reach TCP port 80 on the device
 adb -s USB_SERIAL_A forward tcp:0 localabstract:example
 adb forward --list
 adb -s USB_SERIAL_A forward --remove tcp:8080
 
-# 用户电脑在 18080 运行应用；设备访问自身 8080 时连接该应用
+# An app runs on your computer at port 18080; the device reaches it on its own port 8080
 adb -s USB_SERIAL_A reverse tcp:8080 tcp:18080
 adb -s USB_SERIAL_A reverse --list
 adb -s USB_SERIAL_A reverse --remove-all
 ```
 
-forward 规则按隧道隔离，客户端监听成功后才返回 ADB 成功响应；`tcp:0` 使用客户端 OS 分配的端口。相同电脑上的实际绑定冲突会报错，默认可重绑同一设备，`--no-rebind` 拒绝覆盖。设备目标支持 TCP、localabstract 和 JDWP。
+Forward rules are isolated per tunnel. ADB success is returned only after the client listener binds successfully; `tcp:0` uses a port assigned by the client's OS. Actual binding conflicts on the same computer produce an error. Rebinding for the same device is allowed by default; `--no-rebind` refuses to overwrite a rule. Device targets support TCP, localabstract, and JDWP.
 
-reverse 支持 TCP 设备监听及 TCP 客户端回环目标。设备端口由物理设备共享，有权访问该设备的其他组可以列出、删除或重绑规则；数据目标始终绑定创建规则的隧道。旧隧道或旧租约清理不会删除已被其他隧道覆盖的新规则。
+Reverse supports TCP listeners on the device and TCP loopback targets on the client. Device ports are shared by the physical device: other groups authorized for that device can list, remove, or rebind rules. The data target always belongs to the tunnel that created the rule. Cleanup of an old tunnel or lease does not remove a newer rule that another tunnel has installed in its place.
 
-网关与本机 ADB server 之间通过每条规则唯一的 Linux abstract Unix socket 回连，名称在规则删除及服务重启后均不复用。设备端残留的 reverse 映射因此不会因 TCP 端口复用而进入其他会话。删除失败返回 ADB FAIL、停止新接入并后台重试；若删除已生效但响应丢失，会查询设备端规则确认结果。
+The gateway and local ADB server connect back through a unique Linux abstract Unix socket for each rule. Socket names are never reused, even after rule deletion or service restart. Leftover reverse mappings on a device therefore cannot enter another session through TCP port reuse. A failed deletion returns ADB FAIL, stops new connections, and retries in the background. If deletion took effect but its response was lost, the gateway queries the device's rules to confirm the result.
 
-监听规则本身不持锁，每条实际数据连接持有对应读锁或租约访问资格。断线、Ctrl-C、撤权、证书到期后关闭隧道和所属规则；重新运行隧道命令创建新会话，需要重新执行 forward/reverse。不自动重连、恢复规则或重放 ADB 命令。
+Listening rules themselves hold no lock. Each actual data connection holds the corresponding read lock or lease-based access. Disconnection, Ctrl-C, authorization revocation, or certificate expiration closes the tunnel and its rules. Rerunning the tunnel command creates a new session, so forward/reverse commands must be run again. There is no automatic reconnection, rule restoration, or ADB command replay.
 
-撤权或租约结束会取消后端 I/O，并等待请求处理结束、后端连接关闭后再交接设备锁。设备代次仍有效时，失败的 reverse 清理会保留状态重试；代次变化后只回收旧入口，避免误删新设备会话的映射。
+Authorization revocation or lease termination cancels backend I/O and waits for request handlers to finish and backend connections to close before handing over the device lock. Failed reverse cleanup retains state and retries while the device generation remains valid. Once the generation changes, only the old entry point is reclaimed, preventing deletion of mappings belonging to a new device session.
 
-## 独占租约
+## Exclusive leases
 
-通过同一证书申请物理设备全局写锁：
+Use the same certificate to request a global write lock on a physical device:
 
 ```sh
 curl --cacert run/clients/alice/ca.pem \
@@ -180,7 +184,7 @@ curl --cacert run/clients/alice/ca.pem \
   https://adb-host.example:8443/v1/groups/team-a/devices/USB_SERIAL_A/write-leases
 ```
 
-返回 `201`、规范嵌套资源 `Location` 和 `{"lease": ...}`，不返回密码或 SSH 凭据。轮询 Location，等待 active 后建立显式写隧道：
+The response includes status `201`, a `Location` header pointing to the canonical nested resource, and `{"lease": ...}`. It contains no password or SSH credentials. Poll the Location until the lease is active, then establish an explicit write tunnel:
 
 ```sh
 adbgroup t -s https://adb-host.example:8443 -d run/clients/alice \
@@ -188,50 +192,50 @@ adbgroup t -s https://adb-host.example:8443 -d run/clients/alice \
 adb -H 127.0.0.1 -P 15039 -s USB_SERIAL_A shell
 ```
 
-只有同一证书身份、同一分组、有效且 active 的租约可建立写隧道，并只能访问绑定设备。普通隧道不会自动升级。用户可用同一身份的新证书重连尚未到期的租约；隧道断线不自动释放租约，TTL 或 DELETE 决定其生命周期。
+A write tunnel requires the same certificate identity, the same group, and a valid active lease. It can access only the device bound to that lease. A standard tunnel does not upgrade automatically. Users can reconnect to an unexpired lease with a new certificate for the same identity. Tunnel disconnection does not release the lease automatically; its lifetime is controlled by TTL or DELETE.
 
-写锁 FIFO 等待已有读连接排空，不抢占已有流；等待默认 30 秒，允许 1–3600 秒；租约从 active 开始计时，TTL 默认 300 秒，允许 1–1800 秒。`PATCH {"expires_at":"RFC3339"}` 精确设置到期时间，必须在未来且不超过当前时间 30 分钟；仅尚未到期的 active 租约可更新。DELETE 取消排队或释放租约，重复调用幂等。
+Write locks wait in FIFO order for existing read connections to drain, without preempting active streams. The wait defaults to 30 seconds and accepts 1–3600 seconds. The lease TTL starts when the lease becomes active, defaults to 300 seconds, and accepts 1–1800 seconds. `PATCH {"expires_at":"RFC3339"}` sets an exact expiration time, which must be in the future and no more than 30 minutes from the current time. Only active, unexpired leases can be updated. DELETE cancels a queued request or releases a lease and is idempotent.
 
-设备拔出使该设备的会话和租约失效，并清除其 forward/reverse 规则及本地监听；其他设备的规则和连接继续使用。重新插入按序列号恢复成员归属，转发规则不会自动恢复，需要用户或工具重新执行命令。新建 forward 会等待旧监听清理完成，并创建独立于旧设备代次的监听器；旧 transport ID、旧租约和旧规则不能复用。重复序列号拒绝访问。
+Unplugging a device invalidates its sessions and leases and clears its forward/reverse rules and local listeners. Other devices' rules and connections keep working. Reconnecting restores group membership by serial number, but forwarding rules must be recreated by the user or tooling. A new forward waits for the old listener's cleanup and creates a listener independent of the previous device generation. Old transport IDs, leases, and rules cannot be reused. Access is denied for duplicate serial numbers.
 
-## REST 与隧道接口
+## REST and tunnel API
 
-以下接口全部要求 mTLS；路径参数按 URL 路径段编码。分组配置由 YAML 管理，API 不提供分组成员写接口。
+All endpoints require mTLS. Encode path parameters as URL path segments. Group configuration is managed in YAML; the API does not provide endpoints to modify group membership.
 
-| 方法与路径 | 含义 |
+| Method and path | Description |
 | --- | --- |
-| GET /v1/groups | 列出授权组，按配置顺序 |
-| GET /v1/groups/{group} | 组名及配置设备列表 |
-| GET /v1/groups/{group}/devices | 组设备状态及锁状态，包括断开的成员 |
-| GET /v1/groups/{group}/devices/{device} | 单设备状态和 mTLS 隧道入口描述 |
-| POST /v1/groups/{group}/devices/{device}/write-leases | 正文含可选 wait_seconds、ttl_seconds |
-| GET /v1/groups/{group}/devices/{device}/write-leases/{lease} | 查询自己的租约 |
-| PATCH /v1/groups/{group}/devices/{device}/write-leases/{lease} | 设置 expires_at |
-| DELETE /v1/groups/{group}/devices/{device}/write-leases/{lease} | 幂等释放 |
-| POST /v1/groups/{group}/tunnels | 正文 {} 或 {"lease_id":"..."}；创建 pending 隧道 |
-| GET /v1/groups/{group}/tunnels/{tunnel} | 查询自己的 pending/connecting/active/closed 隧道 |
-| DELETE /v1/groups/{group}/tunnels/{tunnel} | 幂等关闭，终态保留一小时 |
-| GET /v1/groups/{group}/tunnels/{tunnel}/control | 升级为 WebSocket 控制连接 |
-| POST /v1/groups/{group}/tunnels/{tunnel}/streams | 正文 {"kind":"adb"} 或 {"kind":"forward","rule_id":"..."} |
-| GET /v1/groups/{group}/tunnels/{tunnel}/streams/{stream} | 升级为单次接入的二进制 WebSocket 数据流 |
+| GET /v1/groups | List authorized groups in configuration order |
+| GET /v1/groups/{group} | Group name and configured device list |
+| GET /v1/groups/{group}/devices | Group device and lock states, including disconnected members |
+| GET /v1/groups/{group}/devices/{device} | Device state and mTLS tunnel endpoint description |
+| POST /v1/groups/{group}/devices/{device}/write-leases | Body accepts optional wait_seconds and ttl_seconds |
+| GET /v1/groups/{group}/devices/{device}/write-leases/{lease} | Query your own lease |
+| PATCH /v1/groups/{group}/devices/{device}/write-leases/{lease} | Set expires_at |
+| DELETE /v1/groups/{group}/devices/{device}/write-leases/{lease} | Release idempotently |
+| POST /v1/groups/{group}/tunnels | Body {} or {"lease_id":"..."}; create a pending tunnel |
+| GET /v1/groups/{group}/tunnels/{tunnel} | Query your own pending/connecting/active/closed tunnel |
+| DELETE /v1/groups/{group}/tunnels/{tunnel} | Close idempotently; retain terminal state for one hour |
+| GET /v1/groups/{group}/tunnels/{tunnel}/control | Upgrade to a WebSocket control connection |
+| POST /v1/groups/{group}/tunnels/{tunnel}/streams | Body {"kind":"adb"} or {"kind":"forward","rule_id":"..."} |
+| GET /v1/groups/{group}/tunnels/{tunnel}/streams/{stream} | Upgrade to a binary WebSocket data stream that accepts a single connection |
 
-隧道和数据流返回 `id`、`path`，创建成功同时返回 Location。ID 不代表授权；资源绑定身份、分组、隧道和用途。无权限或不存在的资源返回 404，未授权身份返回 403，状态冲突/流上限返回 409，隧道数量超限返回 429。正文最多 4 KiB，拒绝未知字段和多个 JSON 值。
+Tunnels and data streams return `id` and `path`, plus a Location header on successful creation. An ID does not grant authorization: resources are bound to an identity, group, tunnel, and purpose. Missing resources or resources outside the caller's permissions return 404; unauthorized identities return 403; state conflicts or stream limits return 409; tunnel count limits return 429. Request bodies are limited to 4 KiB, and unknown fields or multiple JSON values are rejected.
 
-控制消息是版本 1 JSON：`version,id,op,rule,previous,stream,port,error`。服务端 ready 后，客户端处理 bind、activate、remove、remember、forget、reverse，以同一 id 回复 reply；转发绑定与激活分两阶段，监听失败不覆盖既有规则。reverse 数据流由服务端创建，通过 control 告知所属客户端，仅允许接入已确认规则的回环目标。
+Control messages use version 1 JSON: `version,id,op,rule,previous,stream,port,error`. After the server sends ready, the client handles bind, activate, remove, remember, forget, and reverse, replying with reply and the same id. Forward binding and activation are separate phases, so a failed listener does not overwrite an existing rule. The server creates reverse data streams and notifies the owning client through control; connections can reach only the loopback target of an acknowledged rule.
 
-每条数据 WebSocket 使用二进制消息，无压缩；每个本地 ADB 或转发连接独占一条数据 WebSocket，控制消息独立传输。客户端 WebSocket 使用 HTTP/1.1，反向代理需支持 WebSocket Upgrade 和长连接，且必须保留端到端 mTLS 身份认证；不信任代理传入的身份 Header。
+Each data WebSocket uses binary messages without compression. Each local ADB or forwarding connection has a dedicated data WebSocket, while control messages travel separately. Client WebSockets use HTTP/1.1. Reverse proxies must support WebSocket Upgrade and long-lived connections while preserving end-to-end mTLS authentication. Identity headers supplied by a proxy are not trusted.
 
-隧道/数据流须在创建后 10 秒内接入；控制消息上限 64 KiB，待处理请求上限 64，响应超时 10 秒，心跳每 15 秒一次、等待 10 秒。每隧道最多 128 条数据流，每身份最多 32 个未关闭隧道。长数据流无固定总时限，仍受证书、权限、设备代次和租约约束。
+Tunnels and data streams must connect within 10 seconds of creation. Control messages are limited to 64 KiB, with at most 64 pending requests and a 10-second response timeout. Heartbeats are sent every 15 seconds with a 10-second wait. Each tunnel supports at most 128 data streams; each identity supports at most 32 tunnels that have not been closed. Long-lived data streams have no fixed total duration but remain subject to certificate validity, authorization, device generation, and lease constraints.
 
-## 重载、迁移与验证
+## Reloading, migration, and validation
 
-SIGHUP 只热更新现有组的设备成员、身份授权、读等待时间和队列上限，允许调整组顺序。撤权关闭相关隧道/流并清理所属规则；共享设备上的其他有效用户连接继续使用。
+SIGHUP reloads only device membership in existing groups, identity authorization, the read wait timeout, and the queue limit. Group order may also change. Revocation closes affected tunnels and streams and cleans up their rules; other authorized users' connections to shared devices continue working.
 
-所有真实监听端口、后端、TLS/PKI 配置变更必须冷重启；分组新增、删除、改名也沿用冷重启策略。重载遇到上述变更时拒绝整份新配置，保留旧配置，不部分应用。使用 `systemctl restart adbgroup` 显式冷重启，不保留旧代理连接、租约和网关规则。
+Changes to listening ports, backend settings, or TLS/PKI configuration require a full restart. Adding, deleting, or renaming groups also requires a full restart. A reload containing any such change rejects the entire new configuration and retains the old one, without applying a subset. Use `systemctl restart adbgroup` for an explicit full restart; existing proxy connections, leases, and gateway rules are not retained.
 
-这是不兼容升级：删除 `lease_ssh`、组 `listen`、`forward_min`、`forward_max` 和 `ssh-config` 命令；旧字段严格报错。删除不再使用的系统 SSH 组账号/限制片段由管理员在迁移后处理，程序不会自动修改系统。原有 CA 和客户端证书可继续使用，无需重签。服务仍使用一个守护进程 Linux 账号，不为用户或 team 创建账号。
+This is a breaking upgrade: `lease_ssh`, group `listen`, `forward_min`, `forward_max`, and the `ssh-config` command have been removed. Old fields are strictly rejected. After migration, administrators should remove obsolete system SSH group accounts and restriction snippets; the program never modifies the system automatically. Existing CA and client certificates remain valid and do not need to be reissued. The service continues to use one Linux daemon account and creates no accounts for users or teams.
 
-部署示例 `deploy/adbgroup.service` 使用服务账号 adbgroup，状态目录 /var/lib/adbgroup。配置放在 /etc/adbgroup/config.yaml，设置 `pki.directory: /var/lib/adbgroup/pki`。配置 USB udev 权限及适合发行版的 plugdev 组。
+The deployment example `deploy/adbgroup.service` uses the `adbgroup` service account and state directory `/var/lib/adbgroup`. Place the configuration at `/etc/adbgroup/config.yaml` and set `pki.directory: /var/lib/adbgroup/pki`. Configure USB udev permissions and an appropriate `plugdev` group for your distribution.
 
 ```sh
 go test -race ./...
@@ -239,12 +243,12 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
 
-端到端测试用内存连接运行真实 mTLS、HTTP Upgrade 和 WebSocket，覆盖 ADB 数据、客户端 forward/reverse、身份撤销、租约绑定和断线清理；不要求 OS TCP 监听权限。原生 adb 测试需要安装 adb 且允许 TCP 监听，否则跳过。真实 USB 验收需共享设备、同组两设备及另组设备，并发 shell、文件传输和转发后拔插单台，确认其他设备连接不中断。
+End-to-end tests run real mTLS, HTTP Upgrade, and WebSocket over in-memory connections. They cover ADB data, client-side forward/reverse, identity revocation, lease binding, and cleanup after disconnection, without requiring OS TCP listener permissions. Native adb tests require adb and permission to listen on TCP; otherwise, they are skipped. Real USB acceptance testing requires a shared device, two devices in the same group, and a device in another group. Run concurrent shells, file transfers, and forwarding, then unplug and reconnect one device to confirm that the others stay connected.
 
-无外部依赖时可使用 Go 1.22+ 单独验证核心和 PKI：
+Without external dependencies, you can validate the core and PKI separately with Go 1.22+:
 
 ```sh
 GOTOOLCHAIN=local go test -modfile=test/core.mod -race ./internal/gateway ./internal/pki
 ```
 
-macOS 新系统配旧 Go 1.22 若遇 missing LC_UUID，可加 `-ldflags=-linkmode=external`。生产构建及完整验收使用 Go 1.26+。
+If a recent macOS version with Go 1.22 reports missing LC_UUID, add `-ldflags=-linkmode=external`. Use Go 1.26+ for production builds and full acceptance testing.
