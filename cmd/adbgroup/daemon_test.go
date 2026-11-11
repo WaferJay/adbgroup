@@ -1,10 +1,6 @@
 package main
 
 import (
-	"adbgroup/internal/daemon"
-	"adbgroup/internal/gateway"
-	"adbgroup/internal/pki"
-	"adbgroup/internal/tunnel"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -19,6 +15,11 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/daemon"
+	"github.com/WaferJay/adbgroup/internal/gateway"
+	"github.com/WaferJay/adbgroup/internal/pki"
+	"github.com/WaferJay/adbgroup/internal/tunnel"
 )
 
 func TestMain(m *testing.M) {

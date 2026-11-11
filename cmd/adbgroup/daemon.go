@@ -1,7 +1,6 @@
 package main
 
 import (
-	"adbgroup/internal/daemon"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/daemon"
 )
 
 func commandContext() (context.Context, context.CancelFunc) {

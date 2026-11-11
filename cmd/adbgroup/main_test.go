@@ -1,7 +1,6 @@
 package main
 
 import (
-	"adbgroup/internal/pki"
 	"bytes"
 	"crypto/x509"
 	"encoding/pem"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/WaferJay/adbgroup/internal/pki"
 )
 
 func TestTunnelShortCommandAndDefaults(t *testing.T) {

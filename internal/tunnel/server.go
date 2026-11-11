@@ -2,7 +2,6 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/WaferJay/adbgroup/internal/gateway"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )

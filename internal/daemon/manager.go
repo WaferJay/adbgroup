@@ -2,7 +2,6 @@
 package daemon
 
 import (
-	"adbgroup/internal/tunnel"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/tunnel"
 )
 
 const SetupTimeout = 30 * time.Second

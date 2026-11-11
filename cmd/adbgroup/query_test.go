@@ -1,7 +1,6 @@
 package main
 
 import (
-	"adbgroup/internal/gateway"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 type inventoryStub struct {

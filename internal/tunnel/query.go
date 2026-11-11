@@ -1,9 +1,10 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"net/url"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 // ListGroups returns only the groups authorized for this client's identity.

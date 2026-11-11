@@ -1,8 +1,6 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
-	"adbgroup/internal/pki"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,6 +14,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
+	"github.com/WaferJay/adbgroup/internal/pki"
 )
 
 // Memory sockets exercise real TLS, HTTP upgrades, framing, and backpressure

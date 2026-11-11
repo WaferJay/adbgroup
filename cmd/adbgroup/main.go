@@ -1,9 +1,6 @@
 package main
 
 import (
-	"adbgroup/internal/gateway"
-	"adbgroup/internal/pki"
-	"adbgroup/internal/tunnel"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -22,6 +19,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/WaferJay/adbgroup/internal/gateway"
+	"github.com/WaferJay/adbgroup/internal/pki"
+	"github.com/WaferJay/adbgroup/internal/tunnel"
 	"gopkg.in/yaml.v3"
 )
 

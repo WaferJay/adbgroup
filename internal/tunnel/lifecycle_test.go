@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"errors"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 func TestClientAcceptsAfterConnectionLimitDrains(t *testing.T) {

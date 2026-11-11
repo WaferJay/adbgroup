@@ -1,7 +1,6 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"io"
 	"net"
@@ -9,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 func forwardDevice(t *testing.T, h *harness, serial, spec string) {

@@ -1,4 +1,4 @@
-module adbgroup
+module github.com/WaferJay/adbgroup
 
 go 1.26.0
 

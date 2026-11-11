@@ -1,13 +1,14 @@
 package main
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 type inventoryClient interface {

@@ -1,11 +1,12 @@
 package tunnel
 
 import (
-	"adbgroup/internal/gateway"
 	"context"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/WaferJay/adbgroup/internal/gateway"
 )
 
 func TestInventoryQueriesAuthorizeAndDoNotCreateTunnels(t *testing.T) {
