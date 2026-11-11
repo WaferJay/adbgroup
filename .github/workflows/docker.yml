@@ -1,4 +1,4 @@
-name: Docker image
+name: CI and release
 
 on:
   pull_request:
@@ -16,8 +16,47 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  test:
+    name: Go tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: "1"
+      GOTOOLCHAIN: local
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: Install ADB for native compatibility tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends adb
+          adb version
+
+      - name: Run static analysis
+        run: go vet ./...
+
+      - name: Run tests with race detection
+        run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Check release configuration
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v2.20.0
+          args: check
+
   build:
     name: Build and publish image
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -69,3 +108,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml

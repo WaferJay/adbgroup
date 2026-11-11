@@ -39,6 +39,10 @@ USB 枚举兼容原生后端的 `usb:` 路径和部分 libusb 版本不带前缀
 标签或手动运行工作流时，使用内置 `GITHUB_TOKEN` 发布到
 `ghcr.io/waferjay/adbgroup`，无需额外配置镜像仓库密钥。
 
+构建镜像前，工作流使用 Go 1.26 的最新补丁版本运行 `go vet ./...` 和
+`go test -race -count=1 -timeout=5m ./...`，并安装 ADB 执行原生客户端兼容性测试。
+检查失败时不会构建或发布镜像。
+
 `latest` 和 `main` 镜像标签跟随 `main` 分支；`v1.0.0` 等 Git 标签生成同名镜像
 标签，每次发布还会生成 `sha-<短提交号>` 标签。
 
@@ -48,6 +52,39 @@ docker pull ghcr.io/waferjay/adbgroup:latest
 
 配置、USB 权限和 Compose 命令见 [Docker 部署](docker/README.md)。首次发布后，
 如需匿名拉取镜像，请将 GHCR 包的可见性设为 public。
+
+## 二进制发版
+
+推送 `v0.1.0` 或 `v0.1.0-beta.1` 等语义化版本标签会触发
+[CI 与发版工作流](.github/workflows/docker.yml)。测试和 Docker 镜像发布成功后，
+[发版任务](.github/workflows/release.yml) 使用 [GoReleaser](.goreleaser.yaml)
+创建 GitHub Release，包含：
+
+- Linux、macOS 的 `amd64`、`arm64` 二进制压缩包，命名为
+  `adbgroup_<版本>_<系统>_<架构>.tar.gz`；
+- SHA-256 校验文件 `checksums.txt`；
+- 根据上一标签之后的提交生成的发布说明。
+
+每个压缩包附带中英文 README、服务端和客户端配置示例、systemd 服务及 Linux
+USB 规则。Linux 二进制可运行服务端和客户端，macOS 二进制用于客户端。
+带预发布后缀的标签自动标记为预发布，发布使用内置 `GITHUB_TOKEN`。
+
+提交并推送发版相关修改后，发布版本：
+
+```sh
+git tag -a v0.1.0-beta.1 -m "Release v0.1.0-beta.1"
+git push origin v0.1.0-beta.1
+```
+
+本地安装 GoReleaser v2.20.0 后，可验证打包而不发布：
+
+```sh
+goreleaser check
+goreleaser release --snapshot --clean
+```
+
+产物位于 `dist/`。从 [Releases 页面](https://github.com/WaferJay/adbgroup/releases)
+下载对应压缩包、验证校验和后，将解压得到的 `adbgroup` 放入 PATH 即可。
 
 ## 证书
 

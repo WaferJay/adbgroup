@@ -43,6 +43,11 @@ publishing. Pushes to `main`, `v*` tags, and manual workflow runs publish to
 `ghcr.io/waferjay/adbgroup` using the built-in `GITHUB_TOKEN`; no extra registry
 secrets are required.
 
+Before building images, the workflow runs `go vet ./...` and
+`go test -race -count=1 -timeout=5m ./...` with the latest Go 1.26 patch release.
+It installs ADB to run native client compatibility tests. Failed checks block
+image builds and publication.
+
 The `latest` and `main` tags track `main`. Git tags such as `v1.0.0` produce the
 matching image tag, and each published build also gets a `sha-<short-commit>` tag.
 
@@ -53,6 +58,41 @@ docker pull ghcr.io/waferjay/adbgroup:latest
 See [Docker deployment](docker/README.md) for configuration, USB permissions, and
 Compose commands. For anonymous pulls, set the GHCR package visibility to public
 after its first publication.
+
+## Binary releases
+
+Pushing a semantic version tag such as `v0.1.0` or `v0.1.0-beta.1` runs the
+[CI and release workflow](.github/workflows/docker.yml). After tests and Docker
+image publication succeed, the [release job](.github/workflows/release.yml) uses
+[GoReleaser](.goreleaser.yaml) to publish a GitHub Release containing:
+
+- Linux and macOS binaries for `amd64` and `arm64`, packaged as
+  `adbgroup_<version>_<os>_<arch>.tar.gz`;
+- `checksums.txt` with SHA-256 hashes;
+- release notes generated from commits since the previous tag.
+
+Each archive includes both READMEs, example server/client configuration, the
+systemd service, and Linux USB rules. The Linux binary supports the server and
+client; the macOS binary is for the client. Tags with a prerelease suffix are
+marked as prereleases. Publishing uses the built-in `GITHUB_TOKEN`.
+
+Once the release changes are committed and pushed, publish a version with:
+
+```sh
+git tag -a v0.1.0-beta.1 -m "Release v0.1.0-beta.1"
+git push origin v0.1.0-beta.1
+```
+
+To check packaging locally with GoReleaser v2.20.0 without publishing:
+
+```sh
+goreleaser check
+goreleaser release --snapshot --clean
+```
+
+Artifacts are written to `dist/`. Download a matching archive from the
+[Releases page](https://github.com/WaferJay/adbgroup/releases), verify its checksum,
+and place the extracted `adbgroup` binary on your PATH.
 
 ## Certificates
 
