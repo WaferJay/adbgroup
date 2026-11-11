@@ -9,6 +9,23 @@ Docker 运行在虚拟机中，不能按此方式直接访问宿主机 USB 设�
 
 ## 获取镜像
 
+GitHub Actions 会在 `main` 更新、推送 `v*` 标签或手动触发时构建并发布
+`linux/amd64` 和 `linux/arm64` 镜像。面向 `main` 的 PR 只验证构建，不发布。
+`latest` 和 `main` 跟随主分支，也可以使用 `v1.0.0` 等版本标签或
+`sha-<短提交号>` 标签固定部署版本。
+
+首次发布后，如需匿名拉取，请将 GHCR 包的可见性设为 public。
+使用 CI 发布的镜像：
+
+```sh
+cd docker
+export ADBGROUP_IMAGE=ghcr.io/waferjay/adbgroup:latest
+docker compose pull
+```
+
+将 `ADBGROUP_IMAGE=ghcr.io/waferjay/adbgroup:latest` 写入本目录 `.env`，后续
+Compose 命令即可复用。生产部署可将 `latest` 替换为已发布的具体版本标签。
+
 在本仓库内构建本地镜像：
 
 ```sh

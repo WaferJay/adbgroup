@@ -32,6 +32,23 @@ REST API 和 WebSocket 隧道共用 HTTPS 入口。`backend.address` 使用数�
 
 USB 枚举兼容原生后端的 `usb:` 路径和部分 libusb 版本不带前缀的总线/端口路径，继续排除网络设备和模拟器。
 
+## Docker 镜像
+
+[Docker 镜像工作流](.github/workflows/docker.yml) 构建 `linux/amd64` 和
+`linux/arm64` 镜像。面向 `main` 的 PR 仅验证构建；推送到 `main`、推送 `v*`
+标签或手动运行工作流时，使用内置 `GITHUB_TOKEN` 发布到
+`ghcr.io/waferjay/adbgroup`，无需额外配置镜像仓库密钥。
+
+`latest` 和 `main` 镜像标签跟随 `main` 分支；`v1.0.0` 等 Git 标签生成同名镜像
+标签，每次发布还会生成 `sha-<短提交号>` 标签。
+
+```sh
+docker pull ghcr.io/waferjay/adbgroup:latest
+```
+
+配置、USB 权限和 Compose 命令见 [Docker 部署](docker/README.md)。首次发布后，
+如需匿名拉取镜像，请将 GHCR 包的可见性设为 public。
+
 ## 证书
 
 

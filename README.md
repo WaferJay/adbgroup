@@ -35,6 +35,25 @@ address only; do not expose it to remote users.
 
 USB enumeration supports both the native backend's `usb:` paths and the bus/port paths without that prefix used by some libusb versions. Network devices and emulators remain excluded.
 
+## Docker images
+
+The [Docker image workflow](.github/workflows/docker.yml) builds Linux images for
+`amd64` and `arm64`. Pull requests targeting `main` verify the build without
+publishing. Pushes to `main`, `v*` tags, and manual workflow runs publish to
+`ghcr.io/waferjay/adbgroup` using the built-in `GITHUB_TOKEN`; no extra registry
+secrets are required.
+
+The `latest` and `main` tags track `main`. Git tags such as `v1.0.0` produce the
+matching image tag, and each published build also gets a `sha-<short-commit>` tag.
+
+```sh
+docker pull ghcr.io/waferjay/adbgroup:latest
+```
+
+See [Docker deployment](docker/README.md) for configuration, USB permissions, and
+Compose commands. For anonymous pulls, set the GHCR package visibility to public
+after its first publication.
+
 ## Certificates
 
 If `api.certificate`, `api.key`, and `api.client_ca` are all omitted, the first startup generates a CA and server credentials in `pki.directory` (default: `run/pki` under the configuration directory). Later startups reuse them. Specify either all three settings or none.
