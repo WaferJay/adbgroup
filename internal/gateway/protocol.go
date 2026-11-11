@@ -380,6 +380,10 @@ func (g *Gateway) Handle(parent context.Context, raw net.Conn, s Scope) {
 			fail(c, err)
 			return
 		}
+		if strings.HasPrefix(command, "wait-for-") {
+			g.waitFor(ctx, c, s, serial, id, command)
+			return
+		}
 		d, err := g.Engine.Select(s, serial, id, kind)
 		if err != nil {
 			fail(c, err)

@@ -129,6 +129,8 @@ adb -s USB_SERIAL_A install app.apk
 
 普通设备连接自动获取读锁，结束时释放。读锁表示并发调度资格，允许运行会修改设备的命令；多连接命令不保证整体原子性。写锁等待或生效期间，新普通操作默认等待最多 30 秒，最多排队 128 个请求；长时间 logcat 等现有流可能使写锁申请超时。
 
+支持原生 `adb -s USB_SERIAL_A wait-for-device`：设备未连接、offline 或 unauthorized 时持续等待，进入 `device` 状态后返回；也可使用 `wait-for-recovery`、`wait-for-rescue`、`wait-for-sideload`、`wait-for-bootloader` 和 `wait-for-disconnect`。等待仅观察当前分组内的设备状态，不获取读锁，不受读锁等待超时限制；多设备时需用 `-s` 或 `-t` 指定目标。USB 的 `wait-for-disconnect` 在设备从列表消失时完成，单纯 offline 不算断开。Ctrl-C、隧道关闭或撤权会结束等待。
+
 forward/reverse 的主机端现在都位于用户电脑：
 
 ```sh

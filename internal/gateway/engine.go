@@ -317,6 +317,9 @@ func (e *Engine) Lease(id string) (Lease, bool) {
 func (e *Engine) AuthorizedScope(s Scope) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.authorizedScope(s)
+}
+func (e *Engine) authorizedScope(s Scope) bool {
 	if s.Identity == "" || !e.cfg.Allows(s.Identity, s.Group) {
 		return false
 	}

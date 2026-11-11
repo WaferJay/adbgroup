@@ -238,6 +238,11 @@ func TestNativeADBCompatibility(t *testing.T) {
 	if out := run("-s", "A", "get-state"); strings.TrimSpace(out) != "device" {
 		t.Fatalf("bad state %q", out)
 	}
+	run("-s", "A", "wait-for-device")
+	run("-t", "1", "wait-for-device")
+	if out := run("-s", "A", "wait-for-device", "get-state"); strings.TrimSpace(out) != "device" {
+		t.Fatalf("bad state after wait %q", out)
+	}
 	if out := run("-s", "A", "exec-out", "echo", "hello"); out != "fixture-output\n" {
 		t.Fatalf("bad exec %q", out)
 	}
