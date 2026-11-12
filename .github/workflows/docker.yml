@@ -36,11 +36,14 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
 
-      - name: Install ADB for native compatibility tests
+      - name: Install integration test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends adb
+          sudo apt-get install -y --no-install-recommends adb bash zsh util-linux
           adb version
+          bash --version
+          zsh --version
+          script --version
 
       - name: Run static analysis
         run: go vet ./...

@@ -40,8 +40,8 @@ USB 枚举兼容原生后端的 `usb:` 路径和部分 libusb 版本不带前缀
 `ghcr.io/waferjay/adbgroup`，无需额外配置镜像仓库密钥。
 
 构建镜像前，工作流使用 Go 1.26 的最新补丁版本运行 `go vet ./...` 和
-`go test -race -count=1 -timeout=5m ./...`，并安装 ADB 执行原生客户端兼容性测试。
-检查失败时不会构建或发布镜像。
+`go test -race -count=1 -timeout=5m ./...`，并安装 ADB 执行原生客户端兼容性测试，
+安装 bash、zsh 和 util-linux 提供的 `script` 执行 shell 集成测试。检查失败时不会构建或发布镜像。
 
 `latest` 和 `main` 镜像标签跟随 `main` 分支；`v1.0.0` 等 Git 标签生成同名镜像
 标签，每次发布还会生成 `sha-<短提交号>` 标签。
@@ -324,6 +324,8 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
+
+shell 集成测试要求 PATH 中有 bash、zsh 和 `script`，并允许本地 socket 监听。Linux 上的 `script` 由 util-linux 提供，macOS 自带；缺少工具时测试会立即报错。
 
 端到端测试用内存连接运行真实 mTLS、HTTP Upgrade 和 WebSocket，覆盖 ADB 数据、客户端 forward/reverse、身份撤销、租约绑定和断线清理；不要求 OS TCP 监听权限。原生 adb 测试需要安装 adb 且允许 TCP 监听，否则跳过。真实 USB 验收需共享设备、同组两设备及另组设备，并发 shell、文件传输和转发后拔插单台，确认其他设备连接不中断。
 

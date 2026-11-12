@@ -45,8 +45,9 @@ secrets are required.
 
 Before building images, the workflow runs `go vet ./...` and
 `go test -race -count=1 -timeout=5m ./...` with the latest Go 1.26 patch release.
-It installs ADB to run native client compatibility tests. Failed checks block
-image builds and publication.
+It installs ADB for native client compatibility tests, plus bash, zsh, and
+`script` (from util-linux) for shell integration tests. Failed checks block image
+builds and publication.
 
 The `latest` and `main` tags track `main`. Git tags such as `v1.0.0` produce the
 matching image tag, and each published build also gets a `sha-<short-commit>` tag.
@@ -333,6 +334,8 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 ```
+
+Shell integration tests require bash, zsh, and `script` on PATH, plus permission to listen on local sockets. On Linux, `script` is provided by util-linux; macOS includes it. Missing tools fail these tests immediately.
 
 End-to-end tests run real mTLS, HTTP Upgrade, and WebSocket over in-memory connections. They cover ADB data, client-side forward/reverse, identity revocation, lease binding, and cleanup after disconnection, without requiring OS TCP listener permissions. Native adb tests require adb and permission to listen on TCP; otherwise, they are skipped. Real USB acceptance testing requires a shared device, two devices in the same group, and a device in another group. Run concurrent shells, file transfers, and forwarding, then unplug and reconnect one device to confirm that the others stay connected.
 

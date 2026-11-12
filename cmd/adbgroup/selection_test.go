@@ -99,6 +99,11 @@ func TestMenuChoicesAndGroupMarkers(t *testing.T) {
 }
 
 func TestShellSwitchWithMTLS(t *testing.T) {
+	for _, name := range []string{"zsh", "bash", "script"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Fatalf("shell integration tests require %s in PATH: %v", name, err)
+		}
+	}
 	home, err := os.MkdirTemp("/tmp", "adbgroup-use-")
 	if err != nil {
 		t.Fatal(err)
