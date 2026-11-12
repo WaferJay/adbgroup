@@ -13,15 +13,15 @@ Linux USB 设备分组、统一 mTLS 身份认证、原生 ADB 访问和物理�
 需要 Go 1.26+、近期 Android Platform Tools 和 Linux USB/udev 权限。
 
 ```sh
-go build -o bin/adbgroup ./cmd/adbgroup
+go build -o bin/adg ./cmd/adbgroup
 cp config.example.yaml config.yaml
-bin/adbgroup check -config config.yaml
-bin/adbgroup serve -config config.yaml
+bin/adg check -config config.yaml
+bin/adg serve -config config.yaml
 ```
 
-不带参数运行会显示 usage；`adbgroup -help`（或 `-h`、`--help`）显示命令列表，
-`adbgroup <命令> -help` 显示对应参数和默认值，例如 `adbgroup t -help`、
-`adbgroup t stop -help`、`adbgroup daemon -help`。帮助命令返回成功，不读取配置或启动服务。
+不带参数运行会显示 usage；`adg -help`（或 `-h`、`--help`）显示命令列表，
+`adg <命令> -help` 显示对应参数和默认值，例如 `adg t -help`、
+`adg t stop -help`、`adg daemon -help`。帮助命令返回成功，不读取配置或启动服务。
 
 REST API 和 WebSocket 隧道共用 HTTPS 入口。`backend.address` 使用数值回环地址（如
 `127.0.0.1:5038`）时，ADB server 仅监听回环；使用裸端口（如 `5038`）时监听所有
@@ -84,7 +84,10 @@ goreleaser release --snapshot --clean
 ```
 
 产物位于 `dist/`。从 [Releases 页面](https://github.com/WaferJay/adbgroup/releases)
-下载对应压缩包、验证校验和后，将解压得到的 `adbgroup` 放入 PATH 即可。
+下载对应压缩包、验证校验和后，将解压得到的 `adg` 放入 PATH 即可。
+
+可执行文件名为 `adg`；项目名、压缩包名称、配置路径、服务账号及证书身份继续使用
+`adbgroup`。从原 `adbgroup` 可执行文件升级时，请将脚本和 shell 初始化中的调用改为 `adg`。
 
 ## 证书
 
@@ -106,9 +109,9 @@ pki:
 管理员签发用户凭据：
 
 ```sh
-bin/adbgroup cert -config config.yaml -user alice -out run/clients/alice
+bin/adg cert -config config.yaml -user alice -out run/clients/alice
 # 也可自定义身份与有效期
-bin/adbgroup cert -config config.yaml \
+bin/adg cert -config config.yaml \
   -identity spiffe://adbgroup/ci-runner -days 90 -out run/clients/ci-runner
 ```
 
@@ -139,26 +142,53 @@ credentials: /path/to/run/clients/alice
 `credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。配置完成后启动命令只有：
 
 ```sh
-adbgroup t
+adg t
 ```
 
 `t` 默认自动启动当前用户的后台 daemon，将 tunnel 交给它管理，等本地监听就绪后返回。关闭终端后 tunnel 继续运行。同一 daemon 可以管理多个服务端或分组的 tunnel，每条 tunnel 需要使用不同的本地监听端口：
 
 ```sh
-adbgroup t -g team-a -l 15037
-adbgroup t -g team-b -l 15038
-adbgroup t list             # ID、服务端、分组、监听地址、状态、最近错误
-adbgroup t list --json
-adbgroup t stop <id>        # 停止并移除指定 tunnel
+adg t -g team-a -l 15037
+adg t -g team-b -l 15038
+adg t list             # ID、服务端、分组、监听地址、状态、最近错误
+adg t list --json
+adg t stop <id>        # 停止并移除指定 tunnel
 
-adbgroup daemon status
-adbgroup daemon start      # 可选；t 命令会自动启动
-adbgroup daemon stop       # 等待全部 tunnel 清理后退出
+adg daemon status
+adg daemon start      # 可选；t 命令会自动启动
+adg daemon stop       # 等待全部 tunnel 清理后退出
 
-adbgroup t --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
+adg t --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
 ```
 
 启动成功会输出 tunnel ID 和 `export ADB_SERVER_SOCKET=tcp:127.0.0.1:端口`。在使用 adb/Appium 的终端设置对应的环境变量即可选择 tunnel。重复提交相同参数会复用已有 tunnel；同一监听地址使用不同配置会报冲突，需要先停止旧 tunnel。
+
+要在当前终端方便地切换分组，可先启用 shell 集成。将下面一行加入 `~/.zshrc`，并在当前终端执行一次：
+
+```sh
+eval "$(command adg shell-init zsh)"
+```
+
+bash 使用 `eval "$(command adg shell-init bash)"`，将它加入终端会加载的启动文件（通常为 `~/.bashrc`；登录 shell 需由 `~/.bash_profile` 加载该文件）。初始化不会自动修改这些文件，可以重复执行。
+
+```sh
+adg use team-a         # 自动创建或复用 tunnel，并设置当前终端环境
+adb devices -l
+adg use team-b         # 切换到另一个组，原 tunnel 保留
+adg use                # 编号菜单，Enter/q 取消，需交互终端
+adg d                  # 查询当前选中组
+adg g                  # DEFAULT 标记配置默认组，CURRENT 标记当前组
+adg unuse              # 恢复首次 use 前的 ADB_SERVER_SOCKET，保留 tunnel
+
+# 首次也可以指定连接配置；后续 use/g/d 默认沿用当前选择
+adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
+```
+
+`use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时优先 active，其次 starting，最后重试 failed；同状态按 tunnel ID 选择。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t -w`。
+
+选择状态仅保存在当前 shell 环境，不修改 `tunnel.yaml`。随后从该终端启动的 adb/Appium 会继承 socket，已启动的进程不受影响。`g/d` 的显式 `-g` 可覆盖当前组；显式提供配置文件、服务端或凭据参数时，按原客户端配置规则解析，不套用当前选择。手动修改 `ADB_SERVER_SOCKET` 后，与其不匹配的选择上下文会被忽略。
+
+`t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v2；升级前请用旧版本二进制执行 `adbgroup daemon stop`，升级后通过 `adg` 重新提交 tunnel。
 
 连接断开时只影响该 tunnel，其状态变为 `failed`，原有 forward/reverse 规则清空；再次提交相同启动命令可手动恢复，规则需要重新创建。daemon 不自动重连、不保存 tunnel 配置，重启后需要重新提交启动命令。
 
@@ -167,7 +197,7 @@ daemon 支持 macOS/Linux，控制 socket 位于 `~/.config/adbgroup/daemon/cont
 不使用配置文件时，远程连接也可以简写为：
 
 ```sh
-adbgroup t -s https://adb-host.example:8443 -d run/clients/alice
+adg t -s https://adb-host.example:8443 -d run/clients/alice
 
 # 另一终端
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:15037
@@ -184,11 +214,11 @@ adb -s USB_SERIAL_A install app.apk
 `groups/g` 和 `devices/d` 直接查询 REST API，使用相同的默认客户端配置及 mTLS 凭据，无需启动隧道：
 
 ```sh
-adbgroup g                  # 所有授权组、设备数量，* 标记默认组
-adbgroup d                  # 默认组的设备、连接状态和锁状态
-adbgroup d -g team-b         # 指定组的设备，包括离线设备
-adbgroup g --json            # 组列表 JSON
-adbgroup d -g team-b --json  # 设备列表 JSON，便于脚本处理
+adg g                  # 所有授权组、设备数量，* 标记默认组
+adg d                  # 默认组的设备、连接状态和锁状态
+adg d -g team-b         # 指定组的设备，包括离线设备
+adg g --json            # 组列表 JSON
+adg d -g team-b --json  # 设备列表 JSON，便于脚本处理
 ```
 
 查询命令支持 `-s/-g/-d/-f` 及对应长参数、`-cert/-key/-ca`，命令行覆盖配置文件。设备查询未指定或配置分组时，只在有且仅有一个授权组的情况下自动选择；多个组时需用 `-g` 指定。查询失败返回非零退出码，错误写入 stderr，JSON 结果单独写入 stdout。
@@ -239,7 +269,7 @@ curl --cacert run/clients/alice/ca.pem \
 返回 `201`、规范嵌套资源 `Location` 和 `{"lease": ...}`，不返回密码或 SSH 凭据。轮询 Location，等待 active 后建立显式写隧道：
 
 ```sh
-adbgroup t -s https://adb-host.example:8443 -d run/clients/alice \
+adg t -s https://adb-host.example:8443 -d run/clients/alice \
   -g team-a -w LEASE_ID -l 15039
 adb -H 127.0.0.1 -P 15039 -s USB_SERIAL_A shell
 ```

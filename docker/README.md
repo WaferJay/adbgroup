@@ -188,7 +188,7 @@ Docker 配置中的裸 `backend.address: 5038` 会让 ADB server 监听容器所
 `data/` 内尚不存在的目录：
 
 ```sh
-docker compose exec adbgroup adbgroup cert \
+docker compose exec adbgroup adg cert \
   -config /etc/adbgroup/config.yaml \
   -user alice \
   -out /var/lib/adbgroup/clients/alice

@@ -162,16 +162,25 @@ func (c *Client) Run(parent context.Context, group, lease, address string) error
 // RunReady calls ready once the authenticated tunnel and local listener are ready.
 // Each Client must be used for only one Run or RunReady invocation.
 func (c *Client) RunReady(parent context.Context, group, lease, address string, readyFunc func(group, address string)) error {
-	defer c.http.CloseIdleConnections()
 	address, err := localAddress(address)
 	if err != nil {
 		return err
 	}
+	return c.runReady(parent, group, lease, address, readyFunc)
+}
+
+// RunReadyAuto binds an OS-assigned loopback port after authenticating.
+func (c *Client) RunReadyAuto(parent context.Context, group string, readyFunc func(group, address string)) error {
+	return c.runReady(parent, group, "", "127.0.0.1:0", readyFunc)
+}
+
+func (c *Client) runReady(parent context.Context, group, lease, address string, readyFunc func(group, address string)) error {
+	defer c.http.CloseIdleConnections()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	c.ctx = ctx
 	setup, stop := context.WithTimeout(ctx, setupTimeout)
-	group, err = c.resolveGroup(setup, group)
+	group, err := c.resolveGroup(setup, group)
 	stop()
 	if err != nil {
 		return err
@@ -211,6 +220,7 @@ func (c *Client) RunReady(parent context.Context, group, lease, address string, 
 		return err
 	}
 	defer l.Close()
+	address = l.Addr().String()
 	go func() { <-ctx.Done(); l.Close(); control.CloseNow(); c.shutdown() }()
 	go func() {
 		for {

@@ -44,7 +44,7 @@ func TestInventoryQueriesPrintTablesAndJSON(t *testing.T) {
 			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 			var wantRows [][]string
 			if command == "groups" {
-				wantRows = [][]string{{"NAME", "DEVICES", "DEFAULT"}, {"team-a", "2", "*"}, {"team-b", "0"}}
+				wantRows = [][]string{{"NAME", "DEVICES", "DEFAULT", "CURRENT"}, {"team-a", "2", "*"}, {"team-b", "0"}}
 			} else {
 				wantRows = [][]string{{"SERIAL", "STATE", "READERS", "QUEUED", "WRITER", "DUPLICATE"}, {"A", "device", "2", "1", "lease-id", "false"}, {"B", "disconnected", "0", "0", "-", "false"}}
 				if client.selected != "team-a" {
@@ -111,7 +111,7 @@ func TestInventoryCommandsLoadDefaultClientConfig(t *testing.T) {
 	previous := os.Args
 	defer func() { os.Args = previous }()
 	for _, command := range []string{"groups", "g", "devices", "d"} {
-		os.Args = []string{"adbgroup", command, "--json"}
+		os.Args = []string{"adg", command, "--json"}
 		if err = run(); err == nil || err.Error() != "server must be an HTTPS origin" {
 			t.Errorf("%s did not use client config and query flags: %v", command, err)
 		}

@@ -130,7 +130,7 @@ func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 	}
 	previous := os.Args
 	defer func() { os.Args = previous }()
-	os.Args = []string{"adbgroup", "check", "-config", configPath}
+	os.Args = []string{"adg", "check", "-config", configPath}
 	if err := run(); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 		t.Fatal("check command created PKI state")
 	}
 	out := filepath.Join(dir, "alice")
-	os.Args = []string{"adbgroup", "cert", "-config", configPath, "-user", "alice", "-days", "30", "-out", out}
+	os.Args = []string{"adg", "cert", "-config", configPath, "-user", "alice", "-days", "30", "-out", out}
 	if err := run(); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 	if !bytes.Equal(before, mustRead(t, ca.CA)) {
 		t.Fatal("CA replaced by issuance")
 	}
-	os.Args = []string{"adbgroup", "cert", "-config", configPath, "-user", "bob", "-identity", "spiffe://adbgroup/bob", "-out", filepath.Join(dir, "bad")}
+	os.Args = []string{"adg", "cert", "-config", configPath, "-user", "bob", "-identity", "spiffe://adbgroup/bob", "-out", filepath.Join(dir, "bad")}
 	if err := run(); err == nil {
 		t.Fatal("conflicting identity flags accepted")
 	}

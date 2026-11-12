@@ -7,7 +7,7 @@ import (
 )
 
 func printUsage(out io.Writer) {
-	fmt.Fprint(out, `Usage: adbgroup <command> [options]
+	fmt.Fprint(out, `Usage: adg <command> [options]
 
 Commands:
   check          Validate the server configuration
@@ -17,11 +17,14 @@ Commands:
   groups (g)     List authorized groups
   devices (d)    List devices and lock status in a group
   daemon         Manage the background tunnel daemon
+  use            Select a group in the current terminal
+  unuse          Restore the terminal's previous ADB socket
+  shell-init     Print zsh or bash integration
 
 Options:
   -h, -help      Show help (also accepts --help)
 
-Run "adbgroup <command> -help" for command usage and options.
+Run "adg <command> -help" for command usage and options.
 `)
 }
 
@@ -34,7 +37,15 @@ var commandHelp = map[string]struct {
 	"cert":    {"cert [options] -user <name> -out <directory>", "Issue client credentials. Use -identity instead of -user for an explicit identity URI."},
 	"groups":  {"groups [options]", "List authorized groups. Alias: g."},
 	"devices": {"devices [options]", "List devices and lock status in the selected group. Alias: d."},
-	"tunnel": {"tunnel [options]\n       adbgroup tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
+	"use": {"use [GROUP] [options]", `Select a group in the current terminal; choose from a numbered menu without GROUP.
+Reuse a normal tunnel or create one on an OS-assigned loopback port.
+Requires shell integration: eval "$(command adg shell-init zsh)" (or bash).
+Client connection options override the current selection. No write lease is selected.`},
+	"unuse": {"unuse", "Restore ADB_SERVER_SOCKET from before the first use, keeping background tunnels running."},
+	"shell-init": {"shell-init <zsh|bash>", `Print shell integration. Add eval "$(command adg shell-init zsh)" to ~/.zshrc,
+or use bash and add it to the startup file loaded by your bash terminal.
+Only use/unuse modify the current terminal; tunnel (t) keeps its original behavior.`},
+	"tunnel": {"tunnel [options]\n       adg tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
 Use -no-daemon to run in the foreground.
 
 Commands:
@@ -58,7 +69,7 @@ func newCommandFlags(command string) *flag.FlagSet {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.Usage = func() {
 		help := commandHelp[command]
-		fmt.Fprintf(flags.Output(), "Usage: adbgroup %s\n\n%s\n\nOptions:\n", help.syntax, help.description)
+		fmt.Fprintf(flags.Output(), "Usage: adg %s\n\n%s\n\nOptions:\n", help.syntax, help.description)
 		flags.PrintDefaults()
 		fmt.Fprintln(flags.Output(), "  -h, -help\n    \tshow help (also accepts --help)")
 	}

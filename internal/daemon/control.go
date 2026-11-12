@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 type Request struct {
 	Version   int     `json:"version"`
@@ -113,12 +113,18 @@ func Serve(parent context.Context, l net.Listener, m *Manager) error {
 			case "status":
 			case "list":
 				res.Tunnels = m.List()
-			case "create":
+			case "create", "ensure":
 				if req.Config == nil {
 					opErr = errors.New("missing tunnel configuration")
 					break
 				}
-				info, err := m.Start(requestCtx, *req.Config)
+				var info Tunnel
+				var err error
+				if req.Operation == "ensure" {
+					info, err = m.Ensure(requestCtx, *req.Config)
+				} else {
+					info, err = m.Start(requestCtx, *req.Config)
+				}
 				res.Tunnel, opErr = &info, err
 			case "stop":
 				opErr = m.Stop(requestCtx, req.ID)

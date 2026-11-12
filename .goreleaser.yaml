@@ -5,7 +5,7 @@ project_name: adbgroup
 builds:
   - id: adbgroup
     main: ./cmd/adbgroup
-    binary: adbgroup
+    binary: adg
     env:
       - CGO_ENABLED=0
     goos:

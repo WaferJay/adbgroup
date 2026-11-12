@@ -13,7 +13,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
-    -o /out/adbgroup ./cmd/adbgroup
+    -o /out/adg ./cmd/adbgroup
 
 FROM debian:trixie-slim AS runtime
 
@@ -26,7 +26,7 @@ RUN apt-get update \
     && install -d -o adbgroup -g adbgroup -m 0700 \
         /var/lib/adbgroup /etc/adbgroup
 
-COPY --from=build /out/adbgroup /usr/local/bin/adbgroup
+COPY --from=build /out/adg /usr/local/bin/adg
 
 ENV HOME=/var/lib/adbgroup
 
@@ -35,5 +35,5 @@ WORKDIR /var/lib/adbgroup
 
 EXPOSE 8443
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/adbgroup"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/adg"]
 CMD ["serve", "-config", "/etc/adbgroup/config.yaml"]

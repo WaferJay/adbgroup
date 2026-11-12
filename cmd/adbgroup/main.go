@@ -58,7 +58,7 @@ func load(path string) (gateway.Config, error) {
 }
 func main() {
 	if err := run(); err != nil && !errors.Is(err, flag.ErrHelp) {
-		slog.Error("adbgroup stopped", "error", err)
+		slog.Error("adg stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -220,6 +220,12 @@ func run() error {
 		printUsage(os.Stdout)
 		return flag.ErrHelp
 	case "check", "serve", "cert", "tunnel", "groups", "devices", "daemon":
+	case "shell-init":
+		return runShellInit(os.Args[2:], os.Stdout)
+	case "use":
+		return runUse(os.Args[2:], os.Stdout)
+	case "unuse":
+		return runUnuse(os.Args[2:])
 	default:
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", os.Args[1])
@@ -282,6 +288,12 @@ func run() error {
 		if found {
 			tunnelFlags.applyFile(configured, flags)
 		}
+		markers := groupMarkers{Default: configured.Group}
+		if command != "tunnel" {
+			if active := applySelection(tunnelFlags, flags); active != nil {
+				markers.Current = active.Config.Group
+			}
+		}
 		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
 		if command == "tunnel" && !noDaemon {
 			return startManagedTunnel(tunnelFlags, clientCert, clientKey, serverCA, os.Stdout)
@@ -294,7 +306,7 @@ func run() error {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		if command != "tunnel" {
-			return runQuery(ctx, client, command, tunnelFlags.group, jsonOutput, os.Stdout)
+			return runQuery(ctx, client, command, tunnelFlags.group, jsonOutput, os.Stdout, markers)
 		}
 		return client.Run(ctx, tunnelFlags.group, tunnelFlags.lease, tunnelFlags.listen)
 	}
@@ -395,7 +407,7 @@ func run() error {
 	reload := make(chan os.Signal, 1)
 	signal.Notify(reload, syscall.SIGHUP)
 	defer signal.Stop(reload)
-	slog.Info("adbgroup ready", "api", cfg.API.Listen, "groups", len(cfg.Groups))
+	slog.Info("adg ready", "api", cfg.API.Listen, "groups", len(cfg.Groups))
 	for {
 		select {
 		case <-ctx.Done():

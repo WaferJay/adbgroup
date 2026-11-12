@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,6 +25,11 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("ADBGROUP_TEST_CLI") == "1" {
+		if path := os.Getenv("ADBGROUP_TEST_PID_FILE"); path != "" && len(os.Args) > 1 && os.Args[1] == "use" {
+			if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+				panic(err)
+			}
+		}
 		main()
 		os.Exit(0)
 	}

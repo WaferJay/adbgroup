@@ -13,15 +13,15 @@ Native adb / Appium → local adbgroup tunnel → mTLS HTTPS → groups and lock
 Requires Go 1.26+, recent Android Platform Tools, and Linux USB/udev permissions.
 
 ```sh
-go build -o bin/adbgroup ./cmd/adbgroup
+go build -o bin/adg ./cmd/adbgroup
 cp config.example.yaml config.yaml
-bin/adbgroup check -config config.yaml
-bin/adbgroup serve -config config.yaml
+bin/adg check -config config.yaml
+bin/adg serve -config config.yaml
 ```
 
-Running without arguments displays usage. `adbgroup -help` (or `-h`, `--help`) lists commands.
-Use `adbgroup <command> -help` to see flags and defaults, for example `adbgroup t -help`,
-`adbgroup t stop -help`, or `adbgroup daemon -help`. Help commands exit successfully without
+Running without arguments displays usage. `adg -help` (or `-h`, `--help`) lists commands.
+Use `adg <command> -help` to see flags and defaults, for example `adg t -help`,
+`adg t stop -help`, or `adg daemon -help`. Help commands exit successfully without
 reading configuration or starting services.
 
 The REST API and WebSocket tunnels share one HTTPS endpoint. When `backend.address` is a
@@ -92,7 +92,12 @@ goreleaser release --snapshot --clean
 
 Artifacts are written to `dist/`. Download a matching archive from the
 [Releases page](https://github.com/WaferJay/adbgroup/releases), verify its checksum,
-and place the extracted `adbgroup` binary on your PATH.
+and place the extracted `adg` binary on your PATH.
+
+The executable is named `adg`; the project, archive names, configuration paths,
+service account, and certificate identities retain the name `adbgroup`. When
+upgrading from an `adbgroup` executable, update scripts and shell initialization
+to call `adg`.
 
 ## Certificates
 
@@ -113,9 +118,9 @@ Repeated startups, network changes, or additional SANs do not overwrite certific
 Administrators can issue user credentials:
 
 ```sh
-bin/adbgroup cert -config config.yaml -user alice -out run/clients/alice
+bin/adg cert -config config.yaml -user alice -out run/clients/alice
 # Custom identity and validity period
-bin/adbgroup cert -config config.yaml \
+bin/adg cert -config config.yaml \
   -identity spiffe://adbgroup/ci-runner -days 90 -out run/clients/ci-runner
 ```
 
@@ -146,26 +151,53 @@ credentials: /path/to/run/clients/alice
 The `credentials` directory uses the fixed filenames produced by the `cert` command: `client.pem`, `client.key`, and `ca.pem`. You can also place these files next to `tunnel.yaml` and omit `credentials`. Once configured, start the tunnel with:
 
 ```sh
-adbgroup t
+adg t
 ```
 
 By default, `t` automatically starts a background daemon for the current user, hands the tunnel to it, and returns once the local listener is ready. The tunnel keeps running after the terminal closes. One daemon can manage tunnels to multiple servers or groups, with a different local listening port for each tunnel:
 
 ```sh
-adbgroup t -g team-a -l 15037
-adbgroup t -g team-b -l 15038
-adbgroup t list             # ID, server, group, listener, status, latest error
-adbgroup t list --json
-adbgroup t stop <id>        # Stop and remove a tunnel
+adg t -g team-a -l 15037
+adg t -g team-b -l 15038
+adg t list             # ID, server, group, listener, status, latest error
+adg t list --json
+adg t stop <id>        # Stop and remove a tunnel
 
-adbgroup daemon status
-adbgroup daemon start      # Optional; t starts it automatically
-adbgroup daemon stop       # Exit after all tunnels finish cleanup
+adg daemon status
+adg daemon start      # Optional; t starts it automatically
+adg daemon stop       # Exit after all tunnels finish cleanup
 
-adbgroup t --no-daemon      # Run in the foreground; exit with Ctrl-C
+adg t --no-daemon      # Run in the foreground; exit with Ctrl-C
 ```
 
 A successful startup prints the tunnel ID and `export ADB_SERVER_SOCKET=tcp:127.0.0.1:<port>`. Set that environment variable in the terminal running adb or Appium to select the tunnel. Submitting the same parameters again reuses an existing tunnel. Using different settings for the same listening address causes a conflict; stop the old tunnel first.
+
+For convenient group switching in the current terminal, add this line to `~/.zshrc` and run it once in the current terminal:
+
+```sh
+eval "$(command adg shell-init zsh)"
+```
+
+For bash, use `eval "$(command adg shell-init bash)"` in the startup file your terminal loads (usually `~/.bashrc`; login shells should source it from `~/.bash_profile`). Initialization is safe to repeat and does not edit these files automatically.
+
+```sh
+adg use team-a         # Create or reuse a tunnel and select it in this shell
+adb devices -l
+adg use team-b         # Switch groups, keeping the previous tunnel running
+adg use                # Numbered menu; Enter/q cancels; requires a terminal
+adg d                  # Query the currently selected group
+adg g                  # DEFAULT marks the configured group; CURRENT the selection
+adg unuse              # Restore ADB_SERVER_SOCKET from before the first use
+
+# Explicit connection settings are retained by subsequent use/g/d calls
+adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
+```
+
+`use` matches normal tunnels by server, credential paths, and group, including tunnels created with `t`. If none matches, the OS assigns a loopback port; the configured `listen` is not used. Matching tunnels are preferred in active, starting, then failed order, with ties ordered by tunnel ID. Failed tunnels are retried explicitly. A failed or cancelled switch preserves the previous selection. `use` does not select write leases; continue using `t -w` for write access.
+
+Selection lives in the current shell environment and does not modify `tunnel.yaml`. adb/Appium processes subsequently launched from that shell inherit the socket; existing processes keep their environment. An explicit `-g` overrides the selected group for `g/d`. Explicit configuration, server, or credential options use the original client configuration rules instead of the selection. If you change `ADB_SERVER_SOCKET` manually, a selection context that no longer matches is ignored.
+
+`t/tunnel` retains its existing port and output behavior; shell integration only wraps `use/unuse`. Without integration, these commands print setup instructions without creating a tunnel. This release upgrades the daemon control protocol to v2: use the old binary to run `adbgroup daemon stop` before upgrading, then submit your tunnels again with `adg`.
 
 A disconnection affects only that tunnel: its status becomes `failed`, and its forward/reverse rules are cleared. Run the same startup command again to recover manually, then recreate the rules. The daemon does not reconnect automatically or persist tunnel configurations; submit the startup commands again after it restarts.
 
@@ -174,7 +206,7 @@ The daemon supports macOS and Linux. Its control socket is `~/.config/adbgroup/d
 Without a configuration file, a remote connection can also be started with:
 
 ```sh
-adbgroup t -s https://adb-host.example:8443 -d run/clients/alice
+adg t -s https://adb-host.example:8443 -d run/clients/alice
 
 # In another terminal
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:15037
@@ -191,11 +223,11 @@ adb -s USB_SERIAL_A install app.apk
 `groups/g` and `devices/d` query the REST API directly, using the same default client configuration and mTLS credentials without starting a tunnel:
 
 ```sh
-adbgroup g                  # Authorized groups and device counts; * marks the default
-adbgroup d                  # Default group's devices, connection states, and lock states
-adbgroup d -g team-b         # Devices in a specific group, including offline devices
-adbgroup g --json            # Group list as JSON
-adbgroup d -g team-b --json  # Device list as JSON for scripts
+adg g                  # Authorized groups and device counts; * marks the default
+adg d                  # Default group's devices, connection states, and lock states
+adg d -g team-b         # Devices in a specific group, including offline devices
+adg g --json            # Group list as JSON
+adg d -g team-b --json  # Device list as JSON for scripts
 ```
 
 Query commands accept `-s/-g/-d/-f`, their long forms, and `-cert/-key/-ca`. Command-line flags override the configuration file. If no group is specified or configured for a device query, automatic selection requires exactly one authorized group; otherwise, specify `-g`. Failed queries return a nonzero exit code, errors go to stderr, and JSON results go separately to stdout.
@@ -246,7 +278,7 @@ curl --cacert run/clients/alice/ca.pem \
 The response includes status `201`, a `Location` header pointing to the canonical nested resource, and `{"lease": ...}`. It contains no password or SSH credentials. Poll the Location until the lease is active, then establish an explicit write tunnel:
 
 ```sh
-adbgroup t -s https://adb-host.example:8443 -d run/clients/alice \
+adg t -s https://adb-host.example:8443 -d run/clients/alice \
   -g team-a -w LEASE_ID -l 15039
 adb -H 127.0.0.1 -P 15039 -s USB_SERIAL_A shell
 ```

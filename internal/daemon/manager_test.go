@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -186,5 +187,116 @@ func TestManagerRejectsInvalidConfiguration(t *testing.T) {
 		if _, err := m.Start(testContext(t), cfg); err == nil {
 			t.Fatal("invalid config accepted")
 		}
+	}
+}
+
+func TestEnsureConcurrentReuseAndIsolation(t *testing.T) {
+	var runs atomic.Int32
+	m := newManager(func(ctx context.Context, cfg Config, ready func(string, string)) error {
+		n := runs.Add(1)
+		address := cfg.Listen
+		if address == "" {
+			address = fmt.Sprintf("127.0.0.1:%d", 16000+n)
+		}
+		ready(cfg.Group, address)
+		<-ctx.Done()
+		return nil
+	})
+	defer m.Close()
+	ctx := testContext(t)
+	var wg sync.WaitGroup
+	ids := make(chan string, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			info, err := m.Ensure(ctx, testConfig("ignored"))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			ids <- info.ID
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	first := m.List()[0]
+	for id := range ids {
+		if id != first.ID {
+			t.Fatal("concurrent ensure created duplicate tunnels")
+		}
+	}
+	if runs.Load() != 1 || first.Listen != "127.0.0.1:16001" {
+		t.Fatalf("unexpected automatic listener: %+v (%d runs)", first, runs.Load())
+	}
+	// An explicit start sees the actual port, and can reuse or reject it.
+	if info, err := m.Start(ctx, testConfig(first.Listen)); err != nil || info.ID != first.ID {
+		t.Fatalf("explicit reuse: %+v %v", info, err)
+	}
+	conflict := testConfig(first.Listen)
+	conflict.Group = "b"
+	if _, err := m.Start(ctx, conflict); err == nil {
+		t.Fatal("explicit conflict was not rejected")
+	}
+	for _, update := range []func(*Config){
+		func(c *Config) { c.Group = "b" },
+		func(c *Config) { c.Server = "https://other.example" },
+		func(c *Config) { c.Cert = "/other/client.pem" },
+		func(c *Config) { c.Key = "/other/client.key" },
+		func(c *Config) { c.CA = "/other/ca.pem" },
+	} {
+		cfg := testConfig("")
+		update(&cfg)
+		info, err := m.Ensure(ctx, cfg)
+		if err != nil || info.ID == first.ID || info.Listen == first.Listen {
+			t.Fatalf("connection isolation: %+v %v", info, err)
+		}
+	}
+	lease := testConfig("15050")
+	lease.Lease = "write-lease"
+	if _, err := m.Start(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Ensure(ctx, lease); err == nil {
+		t.Fatal("ensure accepted a write lease")
+	}
+	m.Close()
+	if _, err := m.Ensure(ctx, testConfig("")); err == nil {
+		t.Fatal("closed manager accepted ensure")
+	}
+}
+
+func TestEnsureRetryAndExistingTunnelPreference(t *testing.T) {
+	var attempts atomic.Int32
+	m := newManager(func(ctx context.Context, cfg Config, ready func(string, string)) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("setup failed")
+		}
+		address := cfg.Listen
+		if address == "" {
+			address = "127.0.0.1:16001"
+		}
+		ready(cfg.Group, address)
+		<-ctx.Done()
+		return nil
+	})
+	defer m.Close()
+	ctx := testContext(t)
+	failed, err := m.Ensure(ctx, testConfig(""))
+	if err == nil {
+		t.Fatal("setup failure was lost")
+	}
+	retried, err := m.Ensure(ctx, testConfig(""))
+	if err != nil || failed.ID != retried.ID || retried.Listen == "" {
+		t.Fatalf("retry: %+v %v", retried, err)
+	}
+	other, err := m.Start(ctx, testConfig("15039"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chosen, err := m.Ensure(ctx, testConfig(""))
+	want := min(other.ID, retried.ID)
+	if err != nil || chosen.ID != want {
+		t.Fatalf("deterministic reuse: %+v want %s: %v", chosen, want, err)
 	}
 }

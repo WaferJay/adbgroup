@@ -80,6 +80,9 @@ func NewManager() *Manager {
 		if err != nil {
 			return err
 		}
+		if cfg.Listen == "" {
+			return c.RunReadyAuto(ctx, cfg.Group, ready)
+		}
 		return c.RunReady(ctx, cfg.Group, cfg.Lease, cfg.Listen, ready)
 	})
 }
@@ -115,16 +118,67 @@ func (m *Manager) Start(ctx context.Context, cfg Config) (Tunnel, error) {
 	}
 	owner := e == nil || e.info.State == "failed"
 	if owner {
-		id := fmt.Sprintf("%x", randomID())
-		if e != nil {
-			id = e.info.ID
-		}
-		runCtx, cancel := context.WithCancel(context.Background())
-		e = &entry{config: cfg, info: Tunnel{ID: id, Server: cfg.Server, Group: cfg.Group, Listen: cfg.Listen, State: "starting"}, cancel: cancel, ready: make(chan struct{}), done: make(chan struct{})}
-		m.entries[id] = e
-		go m.execute(runCtx, e)
+		e = m.startLocked(cfg, e)
 	}
 	m.mu.Unlock()
+	return m.wait(ctx, e, owner)
+}
+
+// Ensure reuses a normal tunnel for this connection and group, or binds a new
+// OS-assigned port. Lookup and creation are atomic with respect to Start/Ensure.
+func (m *Manager) Ensure(ctx context.Context, cfg Config) (Tunnel, error) {
+	if cfg.Group == "" || cfg.Lease != "" {
+		return Tunnel{}, errors.New("ensure requires a group and no lease")
+	}
+	cfg.Listen = "127.0.0.1:1" // Validate connection fields without accepting port 0 in Start.
+	if err := cfg.Normalize(); err != nil {
+		return Tunnel{}, err
+	}
+	cfg.Listen = ""
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return Tunnel{}, errors.New("daemon is stopping")
+	}
+	rank := map[string]int{"active": 0, "starting": 1, "failed": 2}
+	var selected *entry
+	for _, e := range m.entries {
+		candidate := e.config
+		candidate.Listen = ""
+		candidate.Group = e.info.Group
+		r, ok := rank[e.info.State]
+		if candidate != cfg || !ok {
+			continue
+		}
+		if selected == nil || r < rank[selected.info.State] || r == rank[selected.info.State] && e.info.ID < selected.info.ID {
+			selected = e
+		}
+	}
+	owner := selected == nil || selected.info.State == "failed"
+	if owner {
+		if selected != nil {
+			cfg.Listen = selected.config.Listen
+		}
+		selected = m.startLocked(cfg, selected)
+	}
+	m.mu.Unlock()
+	return m.wait(ctx, selected, owner)
+}
+
+// Caller holds m.mu.
+func (m *Manager) startLocked(cfg Config, previous *entry) *entry {
+	id := fmt.Sprintf("%x", randomID())
+	if previous != nil {
+		id = previous.info.ID
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	e := &entry{config: cfg, info: Tunnel{ID: id, Server: cfg.Server, Group: cfg.Group, Listen: cfg.Listen, State: "starting"}, cancel: cancel, ready: make(chan struct{}), done: make(chan struct{})}
+	m.entries[id] = e
+	go m.execute(runCtx, e)
+	return e
+}
+
+func (m *Manager) wait(ctx context.Context, e *entry, owner bool) (Tunnel, error) {
 	select {
 	case <-ctx.Done():
 		m.mu.Lock()
@@ -167,6 +221,7 @@ func (m *Manager) execute(ctx context.Context, e *entry) {
 			return
 		}
 		timer.Stop()
+		e.config.Listen = address
 		e.info.Group, e.info.Listen, e.info.State = group, address, "active"
 		close(e.ready)
 	})
