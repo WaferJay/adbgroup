@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -57,11 +58,13 @@ type Tunnel struct {
 }
 
 type entry struct {
-	config Config
-	info   Tunnel
-	cancel context.CancelFunc
-	ready  chan struct{}
-	done   chan struct{}
+	config      Config
+	info        Tunnel
+	cancel      context.CancelFunc
+	changed     chan struct{}
+	done        chan struct{}
+	endpoint    *tunnel.Endpoint
+	established bool
 }
 
 type runner func(context.Context, Config, func(string, string)) error
@@ -75,16 +78,7 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return newManager(func(ctx context.Context, cfg Config, ready func(string, string)) error {
-		c, err := tunnel.NewClient(cfg.Server, cfg.Cert, cfg.Key, cfg.CA)
-		if err != nil {
-			return err
-		}
-		if cfg.Listen == "" {
-			return c.RunReadyAuto(ctx, cfg.Group, ready)
-		}
-		return c.RunReady(ctx, cfg.Group, cfg.Lease, cfg.Listen, ready)
-	})
+	return newManager(nil)
 }
 
 func newManager(run runner) *Manager {
@@ -105,7 +99,11 @@ func (m *Manager) Start(ctx context.Context, cfg Config) (Tunnel, error) {
 		if existing.config.Listen != cfg.Listen {
 			continue
 		}
-		if existing.config != cfg {
+		candidate := cfg
+		if candidate.Group == "" {
+			candidate.Group = existing.info.Group
+		}
+		if existing.config != candidate {
 			m.mu.Unlock()
 			return Tunnel{}, fmt.Errorf("listener %s already belongs to tunnel %s with different configuration", cfg.Listen, existing.info.ID)
 		}
@@ -140,7 +138,7 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Tunnel, error) {
 		m.mu.Unlock()
 		return Tunnel{}, errors.New("daemon is stopping")
 	}
-	rank := map[string]int{"active": 0, "starting": 1, "failed": 2}
+	rank := map[string]int{"active": 0, "starting": 1, "reconnecting": 2, "failed": 3}
 	var selected *entry
 	for _, e := range m.entries {
 		candidate := e.config
@@ -170,33 +168,54 @@ func (m *Manager) startLocked(cfg Config, previous *entry) *entry {
 	id := fmt.Sprintf("%x", randomID())
 	if previous != nil {
 		id = previous.info.ID
+		if cfg.Group == "" {
+			cfg.Group = previous.info.Group
+		}
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
-	e := &entry{config: cfg, info: Tunnel{ID: id, Server: cfg.Server, Group: cfg.Group, Listen: cfg.Listen, State: "starting"}, cancel: cancel, ready: make(chan struct{}), done: make(chan struct{})}
+	e := &entry{config: cfg, info: Tunnel{ID: id, Server: cfg.Server, Group: cfg.Group, Listen: cfg.Listen, State: "starting"}, cancel: cancel, changed: make(chan struct{}), done: make(chan struct{})}
+	if m.run == nil && cfg.Lease == "" {
+		if previous != nil && previous.established {
+			e.endpoint = previous.endpoint
+			e.established = true
+		}
+		if e.endpoint == nil {
+			e.endpoint = tunnel.NewEndpoint(cfg.Listen, func() (*tunnel.Client, error) {
+				return tunnel.NewClient(cfg.Server, cfg.Cert, cfg.Key, cfg.CA)
+			})
+		}
+	}
 	m.entries[id] = e
 	go m.execute(runCtx, e)
 	return e
 }
 
 func (m *Manager) wait(ctx context.Context, e *entry, owner bool) (Tunnel, error) {
-	select {
-	case <-ctx.Done():
+	for {
 		m.mu.Lock()
-		if owner && e.info.State == "starting" {
-			e.cancel()
-		}
+		info, changed := e.info, e.changed
 		m.mu.Unlock()
-		return Tunnel{}, ctx.Err()
-	case <-e.ready:
-	case <-e.done:
+		if info.State == "active" {
+			return info, nil
+		}
+		if info.State != "starting" && info.State != "reconnecting" {
+			return info, fmt.Errorf("tunnel %s: %s", info.ID, info.Error)
+		}
+		select {
+		case <-ctx.Done():
+			m.mu.Lock()
+			if owner && e.info.State == "starting" {
+				e.cancel()
+			}
+			m.mu.Unlock()
+			return Tunnel{}, ctx.Err()
+		case <-changed:
+		case <-e.done:
+		}
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if e.info.State != "active" {
-		return e.info, fmt.Errorf("tunnel %s: %s", e.info.ID, e.info.Error)
-	}
-	return e.info, nil
 }
+
+func (e *entry) signal() { close(e.changed); e.changed = make(chan struct{}) }
 
 func randomID() []byte {
 	b := make([]byte, 12)
@@ -214,22 +233,50 @@ func (m *Manager) execute(ctx context.Context, e *entry) {
 			e.cancel()
 		}
 	})
-	err := m.run(ctx, e.config, func(group, address string) {
+	ready := func(group, address string) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if e.info.State != "starting" || ctx.Err() != nil {
+		if e.info.State == "stopping" || ctx.Err() != nil {
 			return
 		}
 		timer.Stop()
 		e.config.Listen = address
+		e.config.Group = group
 		e.info.Group, e.info.Listen, e.info.State = group, address, "active"
-		close(e.ready)
-	})
+		e.info.Error = ""
+		e.established = true
+		e.signal()
+	}
+	var err error
+	if e.endpoint != nil {
+		err = e.endpoint.Run(ctx, e.config.Group, ready, func(state string, err error) {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if e.info.State != "stopping" {
+				e.info.State, e.info.Error = state, err.Error()
+				e.signal()
+			}
+		})
+	} else if m.run != nil {
+		err = m.run(ctx, e.config, ready)
+	} else {
+		var c *tunnel.Client
+		c, err = tunnel.NewClient(e.config.Server, e.config.Cert, e.config.Key, e.config.CA)
+		if err == nil {
+			err = c.RunReady(ctx, e.config.Group, e.config.Lease, e.config.Listen, ready)
+		}
+	}
 	timer.Stop()
 	e.cancel()
 	m.mu.Lock()
+	abandoned := !e.established && e.endpoint != nil
+	m.mu.Unlock()
+	if abandoned {
+		e.endpoint.Close()
+	}
+	m.mu.Lock()
 	defer m.mu.Unlock()
-	if e.info.Error == "" {
+	if e.info.Error == "" || e.info.State == "reconnecting" {
 		if err != nil {
 			e.info.Error = err.Error()
 		} else {
@@ -238,7 +285,9 @@ func (m *Manager) execute(ctx context.Context, e *entry) {
 	}
 	if e.info.State != "stopping" {
 		e.info.State = "failed"
+		slog.Warn("managed tunnel failed", "id", e.info.ID, "error", e.info.Error)
 	}
+	e.signal()
 	close(e.done)
 }
 
@@ -262,7 +311,11 @@ func (m *Manager) Stop(ctx context.Context, id string) error {
 	}
 	e.info.State = "stopping"
 	e.cancel()
+	e.signal()
 	m.mu.Unlock()
+	if e.endpoint != nil {
+		e.endpoint.Close()
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -284,9 +337,13 @@ func (m *Manager) Close() {
 		e.info.State = "stopping"
 		e.cancel()
 		entries = append(entries, e)
+		e.signal()
 	}
 	m.mu.Unlock()
 	for _, e := range entries {
+		if e.endpoint != nil {
+			e.endpoint.Close()
+		}
 		<-e.done
 	}
 	m.mu.Lock()

@@ -39,6 +39,7 @@ var commandHelp = map[string]struct {
 	"devices": {"devices [options]", "List devices and lock status in the selected group. Alias: d."},
 	"use": {"use [GROUP] [options]", `Select a group in the current terminal; choose from a numbered menu without GROUP.
 Reuse a normal tunnel or create one on an OS-assigned loopback port.
+Managed normal tunnels keep their port and reconnect after server/network outages.
 Requires shell integration: eval "$(command adg shell-init zsh)" (or bash).
 Client connection options override the current selection. No write lease is selected.`},
 	"unuse": {"unuse", "Restore ADB_SERVER_SOCKET from before the first use, keeping background tunnels running."},
@@ -47,6 +48,9 @@ or use bash and add it to the startup file loaded by your bash terminal.
 Only use/unuse modify the current terminal; tunnel (t) keeps its original behavior.`},
 	"tunnel": {"tunnel [options]\n       adg tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
 Use -no-daemon to run in the foreground.
+After connecting, managed normal tunnels reconnect automatically on the same port.
+While reconnecting, new ADB requests fail; streams and forward/reverse rules end.
+Foreground and write-lease tunnels require explicit retry.
 
 Commands:
   list           List managed tunnels (supports -json)

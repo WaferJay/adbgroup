@@ -226,13 +226,15 @@ adg unuse              # 恢复首次 use 前的 ADB_SERVER_SOCKET，保留 tunn
 adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 ```
 
-`use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时优先 active，其次 starting，最后重试 failed；同状态按 tunnel ID 选择。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t -w`。
+`use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时依次优先 active、starting、reconnecting、failed；同状态按 tunnel ID 选择。对 reconnecting tunnel 会等待恢复，不创建新监听；取消等待不会停止后台重连。failed tunnel 需显式重试。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t -w`。
 
 选择状态仅保存在当前 shell 环境，不修改 `tunnel.yaml`。随后从该终端启动的 adb/Appium 会继承 socket，已启动的进程不受影响。`g/d` 的显式 `-g` 可覆盖当前组；显式提供配置文件、服务端或凭据参数时，按原客户端配置规则解析，不套用当前选择。手动修改 `ADB_SERVER_SOCKET` 后，与其不匹配的选择上下文会被忽略。
 
-`t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v2；升级前请用旧版本二进制执行 `adbgroup daemon stop`，升级后通过 `adg` 重新提交 tunnel。
+`t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v3；升级前请用旧版本二进制执行 `adbgroup daemon stop`，升级后通过 `adg` 重新提交 tunnel。
 
-连接断开时只影响该 tunnel，其状态变为 `failed`，原有 forward/reverse 规则清空；再次提交相同启动命令可手动恢复，规则需要重新创建。daemon 不自动重连、不保存 tunnel 配置，重启后需要重新提交启动命令。
+普通托管 tunnel 首次连接成功后，server 重启或网络断开会使其进入 `reconnecting`。daemon 保留原本地端口、分组和本地 tunnel ID，重新读取凭据并建立新的认证会话。不可用期间新 ADB 请求立即返回 `FAIL`，已有连接结束；恢复后后续命令通过原 socket 即可访问，无需再次 `use`。forward/reverse 规则需要重新创建，ADB 命令不会重放。
+
+重连采用从 1 秒增长至 30 秒的指数退避，带 ±20% 抖动；持续在线 30 秒后重置，每轮连接限时 30 秒。网络故障、HTTP 5xx/429/408 和暂时缺失的分组（404）会继续重试。证书、信任校验、协议或明确身份拒绝会停止自动重试并显示 `failed`，本地端口仍保留至停止 tunnel；修复后重复 `use` 或 `t` 可显式重试。首次连接失败、前台 `t --no-daemon` 和 `t -w` 写租约隧道仍需显式重试。daemon 不持久化 tunnel 配置，daemon 自身重启后需重新提交。
 
 daemon 支持 macOS/Linux，控制 socket 位于 `~/.config/adbgroup/daemon/control.sock`，目录权限为 `0700`，socket 权限为 `0600`；日志写入同目录的 `daemon.log`。本地控制协议版本不兼容时会报错，应先使用旧版本命令停止 daemon，再使用新版本启动。首版不安装系统服务或配置开机自启。
 
@@ -292,7 +294,7 @@ reverse 支持 TCP 设备监听及 TCP 客户端回环目标。设备端口由�
 
 网关与本机 ADB server 之间通过每条规则唯一的 Linux abstract Unix socket 回连，名称在规则删除及服务重启后均不复用。设备端残留的 reverse 映射因此不会因 TCP 端口复用而进入其他会话。删除失败返回 ADB FAIL、停止新接入并后台重试；若删除已生效但响应丢失，会查询设备端规则确认结果。
 
-监听规则本身不持锁，每条实际数据连接持有对应读锁或租约访问资格。断线、Ctrl-C、撤权、证书到期后关闭隧道和所属规则；重新运行隧道命令创建新会话，需要重新执行 forward/reverse。不自动重连、恢复规则或重放 ADB 命令。
+监听规则本身不持锁，每条实际数据连接持有对应读锁或租约访问资格。断线、Ctrl-C、撤权、证书到期后关闭远端会话和所属规则；普通托管 tunnel 在可恢复故障后自动建立新会话，保留主 ADB 本地端口。forward/reverse 规则不自动恢复，ADB 命令不重放。
 
 撤权或租约结束会取消后端 I/O，并等待请求处理结束、后端连接关闭后再交接设备锁。设备代次仍有效时，失败的 reverse 清理会保留状态重试；代次变化后只回收旧入口，避免误删新设备会话的映射。
 

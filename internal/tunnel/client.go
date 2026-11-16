@@ -95,7 +95,7 @@ func (c *Client) request(ctx context.Context, method, path string, in, out any) 
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		v, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		return fmt.Errorf("%s: %s", res.Status, strings.TrimSpace(string(v)))
+		return &HTTPError{Status: res.StatusCode, Message: fmt.Sprintf("%s: %s", res.Status, strings.TrimSpace(string(v)))}
 	}
 	if out != nil {
 		return json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(out)
@@ -107,6 +107,9 @@ func (c *Client) websocket(ctx context.Context, path string) (*websocket.Conn, e
 	if err != nil {
 		if res != nil && res.Body != nil {
 			res.Body.Close()
+		}
+		if res != nil && res.StatusCode >= 400 {
+			return nil, &HTTPError{Status: res.StatusCode, Message: err.Error()}
 		}
 		return nil, err
 	}
@@ -175,6 +178,43 @@ func (c *Client) RunReadyAuto(parent context.Context, group string, readyFunc fu
 }
 
 func (c *Client) runReady(parent context.Context, group, lease, address string, readyFunc func(group, address string)) error {
+	var listener net.Listener
+	defer func() {
+		if listener != nil {
+			listener.Close()
+		}
+	}()
+	return c.runSession(parent, group, lease, func(group string) error {
+		var err error
+		listener, err = c.listen("tcp", address)
+		if err != nil {
+			return err
+		}
+		go func() { <-c.ctx.Done(); listener.Close() }()
+		go func() {
+			for {
+				raw, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				if !c.track(raw) {
+					raw.Close()
+					continue
+				}
+				go c.pipeLocal(raw, "adb", "")
+			}
+		}()
+		address = listener.Addr().String()
+		slog.Info("ADB tunnel ready", "listen", address, "group", group, "lease", lease)
+		if readyFunc != nil {
+			readyFunc(group, address)
+		}
+		return nil
+	}, nil)
+}
+
+// runSession owns a single remote session, independently of the ADB listener.
+func (c *Client) runSession(parent context.Context, group, lease string, readyFunc func(string) error, disconnected func()) error {
 	defer c.http.CloseIdleConnections()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -194,8 +234,16 @@ func (c *Client) runReady(parent context.Context, group, lease, address string, 
 	}
 	c.path = resource.Path
 	defer func() {
+		cancel()
+		if disconnected != nil {
+			disconnected()
+		}
 		c.shutdown()
-		cleanup, done := context.WithTimeout(context.Background(), setupTimeout)
+		cleanupLimit := setupTimeout
+		if disconnected != nil {
+			cleanupLimit = 5 * time.Second
+		}
+		cleanup, done := context.WithTimeout(context.Background(), cleanupLimit)
 		defer done()
 		c.request(cleanup, "DELETE", c.path, nil, nil)
 		c.http.CloseIdleConnections()
@@ -213,31 +261,11 @@ func (c *Client) runReady(parent context.Context, group, lease, address string, 
 		return err
 	}
 	if ready.Version != 1 || ready.Op != "ready" {
-		return errors.New("incompatible tunnel protocol")
+		return permanentError{errors.New("incompatible tunnel protocol")}
 	}
-	l, err := c.listen("tcp", address)
-	if err != nil {
+	go func() { <-ctx.Done(); control.CloseNow(); c.shutdown() }()
+	if err := readyFunc(group); err != nil {
 		return err
-	}
-	defer l.Close()
-	address = l.Addr().String()
-	go func() { <-ctx.Done(); l.Close(); control.CloseNow(); c.shutdown() }()
-	go func() {
-		for {
-			raw, e := l.Accept()
-			if e != nil {
-				return
-			}
-			if !c.track(raw) {
-				raw.Close()
-				continue
-			}
-			go c.pipeLocal(raw, "adb", "")
-		}
-	}()
-	slog.Info("ADB tunnel ready", "listen", address, "group", group, "lease", lease)
-	if readyFunc != nil {
-		readyFunc(group, address)
 	}
 	slots := make(chan struct{}, 64)
 	for {
@@ -249,7 +277,7 @@ func (c *Client) runReady(parent context.Context, group, lease, address string, 
 			return fmt.Errorf("control disconnected; forward/reverse rules cleared: %w", err)
 		}
 		if m.Version != 1 || m.ID == "" {
-			return errors.New("invalid control request")
+			return permanentError{errors.New("invalid control request")}
 		}
 		select {
 		case slots <- struct{}{}:

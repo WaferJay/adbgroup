@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 type Request struct {
 	Version   int     `json:"version"`
