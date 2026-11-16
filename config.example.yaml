@@ -22,6 +22,27 @@ pki:
 read_wait_seconds: 30
 read_queue_limit: 128
 
+# Optional groups; enable the summaries used as serial/model sources.
+# Discovery remembers USB devices until the service exits (no state file).
+auto_groups:
+  all:
+    enabled: false
+    name: all
+  configured:
+    enabled: false
+    name: configured
+  discovery:
+    enabled: false
+    name: discovery
+  serial:
+    enabled: false
+    source: all
+    inherit_access: true
+  model:
+    enabled: false
+    source: all
+    prefix: model-
+
 groups:
   - name: team-a
     devices: [USB_SERIAL_A, USB_SERIAL_SHARED]
@@ -29,6 +50,7 @@ groups:
     devices: [USB_SERIAL_B, USB_SERIAL_SHARED]
 
 # Exact URI SAN from the client's verified mTLS certificate (one URI per certificate).
+# Use ["*"] to authorize every existing and future group; locks still apply.
 identities:
   "spiffe://adbgroup/alice": [team-a]
   "spiffe://adbgroup/bob": [team-b]

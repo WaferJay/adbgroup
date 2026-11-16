@@ -150,6 +150,9 @@ func ParseDevices(s string) []Device {
 		}
 		d := Device{Serial: fields[0], State: fields[1]}
 		for _, f := range fields[2:] {
+			if strings.HasPrefix(f, "model:") {
+				d.Model = strings.TrimPrefix(f, "model:")
+			}
 			if strings.HasPrefix(f, "transport_id:") {
 				d.TransportID = strings.TrimPrefix(f, "transport_id:")
 			}

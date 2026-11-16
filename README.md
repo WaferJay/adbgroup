@@ -100,6 +100,48 @@ service account, and certificate identities retain the name `adbgroup`. When
 upgrading from an `adbgroup` executable, update scripts and shell initialization
 to call `adg`.
 
+## Automatic groups and wildcard authorization
+
+The server can group devices by serial or ADB `model`. Each omitted block is disabled by default:
+
+```yaml
+auto_groups:
+  all:
+    enabled: true
+    name: all-devices
+  configured:
+    enabled: true
+    name: static-devices
+  discovery:
+    enabled: true
+    name: discovered-devices
+  serial:
+    enabled: true
+    source: all-devices
+    inherit_access: true
+  model:
+    enabled: true
+    source: static-devices
+    prefix: model-
+
+identities:
+  "spiffe://adbgroup/admin": ["*"]
+  "spiffe://adbgroup/alice": [discovered-devices]
+  "spiffe://adbgroup/bob": [model-Pixel_8]
+```
+
+`configured` collects devices from static `groups`. `discovery` remembers devices from the existing USB monitor and exposes those outside the static configuration. `all` contains their union. Summary names default to `configured`, `discovery`, and `all`. Enabling `all` alone does not enable discovery or require the configured summary. Disconnected discovered devices stay in memory until process exit and are rediscovered after restart; no state file is used. Network devices and emulators are excluded from discovery.
+
+Serial and model grouping require a `source` naming an enabled summary or a static group; generated groups cannot be sources. Serial groups use the original serial as their name, allowing `adg use USB_SERIAL_A`. Model groups use the raw ADB `model` value with a default `model-` prefix, without executing device shell commands. Unknown models are omitted until available; the last known model is kept in memory and replaced by new nonempty values.
+
+`inherit_access` defaults to false. When enabled, a direct grant to a static, summary, or model group also grants the corresponding serial groups. Serial grants do not grant access to other groups. In this example Bob can select serial groups for devices in `model-Pixel_8`. Summary grants include future members. Identities may preauthorize future serial or model names when the corresponding rule is enabled.
+
+A complete `"*"` entry in identities grants every existing and future group, including static and automatic groups. Partial patterns such as `model-*` are unsupported. Wildcards do not bypass group existence, device availability, active write leases, or physical device locks. Quote `"*"` in YAML. Clients with multiple authorized groups still need an explicit `-g` or `adg use <group>` selection.
+
+All groups share one namespace. Conflicts known from configuration reject startup or reload. Runtime conflicts are logged and conflicting generated groups are withheld; static and summary groups remain intact. Changes to `auto_groups` require restart. Membership, identity, or model changes recompute groups and authorization, closing invalid accesses and revoking affected leases.
+
+Group lists contain static groups in configuration order, then the configured, discovery, and all summaries, followed by serial and model groups sorted by name within each type. Automatic members are sorted and deduplicated by serial, including disconnected devices.
+
 ## Certificates
 
 If `api.certificate`, `api.key`, and `api.client_ca` are all omitted, the first startup generates a CA and server credentials in `pki.directory` (default: `run/pki` under the configuration directory). Later startups reuse them. Specify either all three settings or none.
@@ -296,8 +338,8 @@ All endpoints require mTLS. Encode path parameters as URL path segments. Group c
 
 | Method and path | Description |
 | --- | --- |
-| GET /v1/groups | List authorized groups in configuration order |
-| GET /v1/groups/{group} | Group name and configured device list |
+| GET /v1/groups | List authorized groups, static groups before automatic groups |
+| GET /v1/groups/{group} | Group name and effective device membership |
 | GET /v1/groups/{group}/devices | Group device and lock states, including disconnected members |
 | GET /v1/groups/{group}/devices/{device} | Device state and mTLS tunnel endpoint description |
 | POST /v1/groups/{group}/devices/{device}/write-leases | Body accepts optional wait_seconds and ttl_seconds |
@@ -323,7 +365,7 @@ Tunnels and data streams must connect within 10 seconds of creation. Control mes
 
 SIGHUP reloads only device membership in existing groups, identity authorization, the read wait timeout, and the queue limit. Group order may also change. Revocation closes affected tunnels and streams and cleans up their rules; other authorized users' connections to shared devices continue working.
 
-Changes to listening ports, backend settings, or TLS/PKI configuration require a full restart. Adding, deleting, or renaming groups also requires a full restart. A reload containing any such change rejects the entire new configuration and retains the old one, without applying a subset. Use `systemctl restart adbgroup` for an explicit full restart; existing proxy connections, leases, and gateway rules are not retained.
+Changes to listening ports, backend settings, TLS/PKI configuration, or `auto_groups` require a full restart. Adding, deleting, or renaming static groups also requires a full restart. A reload containing any such change rejects the entire new configuration and retains the old one, without applying a subset. Use `systemctl restart adbgroup` for an explicit full restart; existing proxy connections, leases, and gateway rules are not retained.
 
 This is a breaking upgrade: `lease_ssh`, group `listen`, `forward_min`, `forward_max`, and the `ssh-config` command have been removed. Old fields are strictly rejected. After migration, administrators should remove obsolete system SSH group accounts and restriction snippets; the program never modifies the system automatically. Existing CA and client certificates remain valid and do not need to be reissued. The service continues to use one Linux daemon account and creates no accounts for users or teams.
 

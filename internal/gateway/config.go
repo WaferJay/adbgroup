@@ -5,7 +5,6 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +17,9 @@ type Config struct {
 	ReadWaitSeconds int                 `yaml:"read_wait_seconds"`
 	ReadQueueLimit  int                 `yaml:"read_queue_limit"`
 	Groups          []Group             `yaml:"groups"`
+	AutoGroups      AutoGroupsConfig    `yaml:"auto_groups"`
 	Identities      map[string][]string `yaml:"identities"`
+	serialGroups    map[string]string
 }
 type BackendConfig struct {
 	Binary  string `yaml:"binary"`
@@ -47,6 +48,7 @@ type Group struct {
 }
 
 func (c *Config) Defaults() {
+	c.AutoGroups.defaults()
 	if c.PKI.Directory == "" {
 		c.PKI.Directory = "run/pki"
 	}
@@ -124,7 +126,7 @@ func (c Config) Validate() error {
 	}
 	names := map[string]bool{}
 	for _, g := range c.Groups {
-		if !regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`).MatchString(g.Name) || names[g.Name] {
+		if !groupNamePattern.MatchString(g.Name) || names[g.Name] {
 			return fmt.Errorf("invalid or duplicate group: %q", g.Name)
 		}
 		seen := map[string]bool{}
@@ -136,12 +138,15 @@ func (c Config) Validate() error {
 		}
 		names[g.Name] = true
 	}
+	if err := c.validateAutoGroups(names); err != nil {
+		return err
+	}
 	for identity, groups := range c.Identities {
 		if identity == "" {
 			return fmt.Errorf("empty identity")
 		}
 		for _, g := range groups {
-			if !names[g] {
+			if g != "*" && !names[g] && !c.pendingAutoGroup(g) {
 				return fmt.Errorf("identity %s references unknown group %s", identity, g)
 			}
 		}
@@ -157,9 +162,26 @@ func (c Config) Group(name string) (Group, bool) {
 	return Group{}, false
 }
 func (c Config) Allows(identity, group string) bool {
+	if identity == "" {
+		return false
+	}
+	if _, ok := c.Group(group); !ok {
+		return false
+	}
 	for _, g := range c.Identities[identity] {
-		if g == group {
+		if g == group || g == "*" {
 			return true
+		}
+	}
+	if serial, ok := c.serialGroups[group]; ok && c.AutoGroups.Serial.InheritAccess {
+		for _, name := range c.Identities[identity] {
+			// Only direct grants to non-serial groups seed inheritance.
+			if _, generated := c.serialGroups[name]; generated {
+				continue
+			}
+			if g, exists := c.Group(name); exists && g.Contains(serial) {
+				return true
+			}
 		}
 	}
 	return false

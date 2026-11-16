@@ -108,6 +108,37 @@ func TestLoadExampleAndRejectUnknownOrExtraDocuments(t *testing.T) {
 	}
 }
 
+func TestLoadAutoGroupExamples(t *testing.T) {
+	for _, examplePath := range []string{"../../config.example.yaml", "../../docker/config.example.yaml"} {
+		t.Run(examplePath, func(t *testing.T) {
+			example, err := os.ReadFile(examplePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			active := strings.ReplaceAll(string(example), "enabled: false", "enabled: true")
+			active = strings.Replace(active, "[team-a]", `["*"]`, 1)
+			if err := os.WriteFile(path, []byte(active), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.AutoGroups.Serial.Enabled || !cfg.AutoGroups.Serial.InheritAccess || !cfg.AutoGroups.Model.Enabled || !cfg.AutoGroups.Discovery.Enabled || cfg.Identities["spiffe://adbgroup/alice"][0] != "*" {
+				t.Fatalf("automatic configuration not decoded: %+v", cfg.AutoGroups)
+			}
+			invalid := strings.Replace(active, "inherit_access:", "unknown_auto_field:", 1)
+			if err := os.WriteFile(path, []byte(invalid), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := load(path); err == nil {
+				t.Fatal("unknown nested auto_groups field accepted")
+			}
+		})
+	}
+}
+
 func TestDefaultPKILoadAndCertCommand(t *testing.T) {
 	example, err := os.ReadFile("../../config.example.yaml")
 	if err != nil {

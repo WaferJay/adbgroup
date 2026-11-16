@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +23,7 @@ type Device struct {
 	State       string `json:"state"`
 	TransportID string `json:"transport_id"`
 	Detail      string `json:"-"`
+	Model       string `json:"-"`
 	Generation  uint64 `json:"generation"`
 	Readers     int    `json:"readers"`
 	Queued      int    `json:"queued_readers"`
@@ -53,21 +57,27 @@ type access struct {
 	closing    bool
 }
 type Engine struct {
-	mu       sync.Mutex
-	cfg      Config
-	devices  map[string]*Device
-	leases   map[string]*Lease
-	queue    map[string][]string
-	accesses map[uint64]access
-	next     uint64
-	changed  chan struct{}
-	closing  map[string]int
+	mu        sync.Mutex
+	cfg       Config
+	source    Config
+	known     map[string]string
+	conflicts string
+	devices   map[string]*Device
+	leases    map[string]*Lease
+	queue     map[string][]string
+	accesses  map[uint64]access
+	next      uint64
+	changed   chan struct{}
+	closing   map[string]int
 }
 
 func NewEngine(c Config) *Engine {
-	return &Engine{cfg: c, devices: map[string]*Device{}, leases: map[string]*Lease{}, queue: map[string][]string{}, accesses: map[uint64]access{}, changed: make(chan struct{}), closing: map[string]int{}}
+	c.Defaults()
+	e := &Engine{source: cloneConfig(c), known: map[string]string{}, devices: map[string]*Device{}, leases: map[string]*Lease{}, queue: map[string][]string{}, accesses: map[uint64]access{}, changed: make(chan struct{}), closing: map[string]int{}}
+	e.cfg, _ = c.effectiveConfig(e.known)
+	return e
 }
-func (e *Engine) Config() Config           { e.mu.Lock(); defer e.mu.Unlock(); return e.cfg }
+func (e *Engine) Config() Config           { e.mu.Lock(); defer e.mu.Unlock(); return cloneConfig(e.cfg) }
 func (e *Engine) signal()                  { close(e.changed); e.changed = make(chan struct{}) }
 func (e *Engine) Changed() <-chan struct{} { e.mu.Lock(); defer e.mu.Unlock(); return e.changed }
 func (e *Engine) permitted(s Scope, serial string) bool {
@@ -178,7 +188,35 @@ func (e *Engine) Update(devices []Device) {
 		}
 	}
 	e.devices = next
+	rememberDevices(e.source, e.known, next)
+	var conflicts []string
+	e.cfg, conflicts = e.source.effectiveConfig(e.known)
+	key := strings.Join(conflicts, ", ")
+	if key != "" && key != e.conflicts {
+		slog.Error("auto group names rejected", "groups", conflicts)
+	}
+	e.conflicts = key
+	e.revokeUnauthorized()
+	e.advance()
 	e.signal()
+}
+
+func rememberDevices(source Config, known map[string]string, devices map[string]*Device) {
+	configured := map[string]bool{}
+	for _, group := range source.Groups {
+		for _, serial := range group.Devices {
+			configured[serial] = true
+		}
+	}
+	for serial, d := range devices {
+		if source.AutoGroups.Discovery.Enabled || configured[serial] {
+			model := d.Model
+			if model == "" {
+				model = known[serial]
+			}
+			known[serial] = model
+		}
+	}
 }
 func (e *Engine) invalidate(serial string) {
 	for id, a := range e.accesses {
@@ -193,22 +231,36 @@ func (e *Engine) invalidate(serial string) {
 	}
 	delete(e.queue, serial)
 }
-func (e *Engine) Reload(c Config) {
+func (e *Engine) Reload(c Config) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.cfg = c
+	c.Defaults()
+	known := maps.Clone(e.known)
+	rememberDevices(c, known, e.devices)
+	next, conflicts := c.effectiveConfig(known)
+	if len(conflicts) != 0 {
+		return fmt.Errorf("auto group name conflicts: %s", strings.Join(conflicts, ", "))
+	}
+	e.source, e.cfg = cloneConfig(c), next
+	e.known = known
+	e.conflicts = ""
+	e.revokeUnauthorized()
+	e.advance()
+	e.signal()
+	return nil
+}
+
+func (e *Engine) revokeUnauthorized() {
 	for id, a := range e.accesses {
 		if !e.permitted(a.scope, a.serial) {
 			e.closeAccess(id)
 		}
 	}
 	for _, l := range e.leases {
-		if (l.State == "active" || l.State == "queued") && (!c.Allows(l.Owner, l.Group) || !e.member(l.Group, l.Serial)) {
+		if (l.State == "active" || l.State == "queued") && (!e.cfg.Allows(l.Owner, l.Group) || !e.member(l.Group, l.Serial)) {
 			e.endLease(l, "revoked")
 		}
 	}
-	e.advance()
-	e.signal()
 }
 func (e *Engine) member(group, serial string) bool {
 	g, ok := e.cfg.Group(group)

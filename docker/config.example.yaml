@@ -15,12 +15,34 @@ pki:
 read_wait_seconds: 30
 read_queue_limit: 128
 
+# Optional groups. Enable all plus serial to use `adg use <serial>`.
+# Enable discovery to include newly connected USB devices; memory only.
+auto_groups:
+  all:
+    enabled: false
+    name: all
+  configured:
+    enabled: false
+    name: configured
+  discovery:
+    enabled: false
+    name: discovery
+  serial:
+    enabled: false
+    source: all
+    inherit_access: true
+  model:
+    enabled: false
+    source: all
+    prefix: model-
+
 groups:
   - name: team-a
     devices: [USB_SERIAL_A, USB_SERIAL_SHARED]
   - name: team-b
     devices: [USB_SERIAL_B, USB_SERIAL_SHARED]
 
+# ["*"] authorizes all existing and future groups, with the same device locks.
 identities:
   "spiffe://adbgroup/alice": [team-a]
   "spiffe://adbgroup/bob": [team-b]

@@ -212,7 +212,7 @@ docker compose cp \
 docker compose kill -s HUP adbgroup
 ```
 
-后端、监听、PKI 或分组名称变化需要重建容器：
+后端、监听、PKI、分组名称或 `auto_groups` 配置变化需要重建容器：
 
 ```sh
 docker compose up -d --no-build --force-recreate

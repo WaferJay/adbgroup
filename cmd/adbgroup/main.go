@@ -407,7 +407,7 @@ func run() error {
 	reload := make(chan os.Signal, 1)
 	signal.Notify(reload, syscall.SIGHUP)
 	defer signal.Stop(reload)
-	slog.Info("adg ready", "api", cfg.API.Listen, "groups", len(cfg.Groups))
+	slog.Info("adg ready", "api", cfg.API.Listen, "groups", len(engine.Config().Groups))
 	for {
 		select {
 		case <-ctx.Done():
@@ -426,12 +426,14 @@ func run() error {
 		case <-reload:
 			next, e := load(*file)
 			if e == nil && !cfg.ReloadCompatible(next) {
-				e = errors.New("backend, API, PKI and group names require a full service restart")
+				e = errors.New("backend, API, PKI, group names and auto_groups require a full service restart")
+			}
+			if e == nil {
+				e = engine.Reload(next)
 			}
 			if e != nil {
 				slog.Error("configuration reload rejected", "error", e)
 			} else {
-				engine.Reload(next)
 				cfg = next
 				slog.Info("configuration reloaded")
 			}
