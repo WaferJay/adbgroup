@@ -225,6 +225,7 @@ For bash, use `eval "$(command adg shell-init bash)"` in the startup file your t
 
 ```sh
 adg use team-a         # Create or reuse a tunnel and select it in this shell
+echo "$ADBGROUP_GROUP" # team-a; also exported to child processes
 adb devices -l
 adg use team-b         # Switch groups, keeping the previous tunnel running
 adg use                # Numbered menu; Enter/q cancels; requires a terminal
@@ -239,6 +240,8 @@ adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 `use` matches normal tunnels by server, credential paths, and group, including tunnels created with `t`. If none matches, the OS assigns a loopback port; the configured `listen` is not used. Matching tunnels are preferred in active, starting, reconnecting, then failed order, with ties ordered by tunnel ID. For reconnecting tunnels, `use` waits for recovery without creating another listener; cancelling that wait leaves reconnection running. Failed tunnels are retried explicitly. A failed or cancelled switch preserves the previous selection. `use` does not select write leases; continue using `t -w` for write access.
 
 Selection lives in the current shell environment and does not modify `tunnel.yaml`. adb/Appium processes subsequently launched from that shell inherit the socket; existing processes keep their environment. An explicit `-g` overrides the selected group for `g/d`. Explicit configuration, server, or credential options use the original client configuration rules instead of the selection. If you change `ADB_SERVER_SOCKET` manually, a selection context that no longer matches is ignored.
+
+`ADBGROUP_GROUP` contains the group name selected by the last successful `adg use`, for shell prompts and scripts. A failed or cancelled switch leaves it unchanged; `adg unuse` unsets it. After upgrading, reload shell integration in existing terminals to enable this variable.
 
 `t/tunnel` retains its existing port and output behavior; shell integration only wraps `use/unuse`. Without integration, these commands print setup instructions without creating a tunnel. This release upgrades the daemon control protocol to v3: use the old binary to run `adbgroup daemon stop` before upgrading, then submit your tunnels again with `adg`.
 

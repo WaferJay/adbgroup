@@ -215,6 +215,7 @@ bash 使用 `eval "$(command adg shell-init bash)"`，将它加入终端会加�
 
 ```sh
 adg use team-a         # 自动创建或复用 tunnel，并设置当前终端环境
+echo "$ADBGROUP_GROUP" # team-a；子进程也会继承该变量
 adb devices -l
 adg use team-b         # 切换到另一个组，原 tunnel 保留
 adg use                # 编号菜单，Enter/q 取消，需交互终端
@@ -229,6 +230,8 @@ adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 `use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时依次优先 active、starting、reconnecting、failed；同状态按 tunnel ID 选择。对 reconnecting tunnel 会等待恢复，不创建新监听；取消等待不会停止后台重连。failed tunnel 需显式重试。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t -w`。
 
 选择状态仅保存在当前 shell 环境，不修改 `tunnel.yaml`。随后从该终端启动的 adb/Appium 会继承 socket，已启动的进程不受影响。`g/d` 的显式 `-g` 可覆盖当前组；显式提供配置文件、服务端或凭据参数时，按原客户端配置规则解析，不套用当前选择。手动修改 `ADB_SERVER_SOCKET` 后，与其不匹配的选择上下文会被忽略。
+
+`ADBGROUP_GROUP` 保存最近一次成功执行 `adg use` 选中的组名，方便 shell 提示符和脚本使用。切换失败或取消时保留原值，`adg unuse` 时清除。升级后，已有终端需重新加载 shell 集成才能启用该变量。
 
 `t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v3；升级前请用旧版本二进制执行 `adbgroup daemon stop`，升级后通过 `adg` 重新提交 tunnel。
 

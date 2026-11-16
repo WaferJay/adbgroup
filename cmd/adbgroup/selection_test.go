@@ -173,37 +173,47 @@ case "$2" in
   empty) export ADB_SERVER_SOCKET='' ;;
   custom) export ADB_SERVER_SOCKET='tcp:127.0.0.1:9999' ;;
 esac
-unset ADBGROUP_CONTEXT
+unset ADBGROUP_CONTEXT ADBGROUP_GROUP
 original_set="${ADB_SERVER_SOCKET+x}"
 original_value="${ADB_SERVER_SOCKET-}"
 eval "$(command adg shell-init "$1")"
 eval "$(command adg shell-init "$1")"
 adg use a -s "$TEST_SERVER" -d "$TEST_CREDS"
+[ "$ADBGROUP_GROUP" = a ]
 first_socket=$ADB_SERVER_SOCKET
 first_context=$ADBGROUP_CONTEXT
 [ "$(sh -c 'printf %s "$ADB_SERVER_SOCKET"')" = "$first_socket" ]
+[ "$(sh -c 'printf %s "$ADBGROUP_GROUP"')" = a ]
 case "$(adg d --json)" in *DEVICE_A*) ;; *) exit 10 ;; esac
 adg use b
+[ "$ADBGROUP_GROUP" = b ]
 [ "$ADB_SERVER_SOCKET" != "$first_socket" ]
 case "$(adg d --json)" in *DEVICE_B*) ;; *) exit 11 ;; esac
 case "$(adg d -g a --json)" in *DEVICE_A*) ;; *) exit 12 ;; esac
+[ "$ADBGROUP_GROUP" = b ]
 case "$(adg g)" in *CURRENT*) ;; *) exit 13 ;; esac
 adg use a
+[ "$ADBGROUP_GROUP" = a ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 if adg use forbidden; then exit 15; fi
+[ "$ADBGROUP_GROUP" = a ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 if adg use a -s http://invalid.example; then exit 14; fi
+[ "$ADBGROUP_GROUP" = a ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 command adg t -s "$TEST_SERVER" -d "$TEST_CREDS" -g a -l "${first_socket#tcp:}"
+[ "$ADBGROUP_GROUP" = a ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 adg unuse
 [ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
 [ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
 [ "${ADBGROUP_CONTEXT+x}" != x ]
+[ "${ADBGROUP_GROUP+x}" != x ]
 adg unuse
+[ "${ADBGROUP_GROUP+x}" != x ]
 printf '\nSHELL_SWITCH_OK\n'
 `
 				commandCtx, done := context.WithTimeout(context.Background(), 30*time.Second)
@@ -236,13 +246,16 @@ printf '\nSHELL_SWITCH_OK\n'
 				script := `set -eu
 export ADB_SERVER_SOCKET=original
 unset ADBGROUP_CONTEXT
+export ADBGROUP_GROUP=original
 eval "$(command adg shell-init "$TEST_SHELL")"
 if adg use -s "$TEST_SERVER" -d "$TEST_CREDS"; then
     [ "$TEST_CANCEL" = false ]
+    [ "$ADBGROUP_GROUP" = b ]
     case "$(adg d --json)" in *DEVICE_B*) ;; *) exit 20 ;; esac
 else
     [ "$TEST_CANCEL" = true ]
     [ "$ADB_SERVER_SOCKET" = original ]
+    [ "$ADBGROUP_GROUP" = original ]
     [ "${ADBGROUP_CONTEXT+x}" != x ]
 fi
 printf '\nMENU_OK\n'

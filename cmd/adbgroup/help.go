@@ -38,11 +38,12 @@ var commandHelp = map[string]struct {
 	"groups":  {"groups [options]", "List authorized groups. Alias: g."},
 	"devices": {"devices [options]", "List devices and lock status in the selected group. Alias: d."},
 	"use": {"use [GROUP] [options]", `Select a group in the current terminal; choose from a numbered menu without GROUP.
+Export ADBGROUP_GROUP with the selected group name.
 Reuse a normal tunnel or create one on an OS-assigned loopback port.
 Managed normal tunnels keep their port and reconnect after server/network outages.
 Requires shell integration: eval "$(command adg shell-init zsh)" (or bash).
 Client connection options override the current selection. No write lease is selected.`},
-	"unuse": {"unuse", "Restore ADB_SERVER_SOCKET from before the first use, keeping background tunnels running."},
+	"unuse": {"unuse", "Restore ADB_SERVER_SOCKET from before the first use and unset ADBGROUP_GROUP, keeping background tunnels running."},
 	"shell-init": {"shell-init <zsh|bash>", `Print shell integration. Add eval "$(command adg shell-init zsh)" to ~/.zshrc,
 or use bash and add it to the startup file loaded by your bash terminal.
 Only use/unuse modify the current terminal; tunnel (t) keeps its original behavior.`},

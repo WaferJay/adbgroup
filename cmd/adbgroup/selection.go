@@ -79,15 +79,16 @@ func writeShellState(action string, s *selection) error {
 	if err := f.Truncate(0); err != nil {
 		return err
 	}
-	socket, data := "", []byte{}
+	socket, group, data := "", "", []byte{}
 	if s != nil {
 		socket = "tcp:" + s.Config.Listen
+		group = s.Config.Group
 		data, err = json.Marshal(s)
 		if err != nil {
 			return err
 		}
 	}
-	_, err = fmt.Fprintf(f, "%s\n%s\n%s\n", action, socket, data)
+	_, err = fmt.Fprintf(f, "%s\n%s\n%s\n%s\n", action, socket, data, group)
 	if err != nil {
 		return err
 	}

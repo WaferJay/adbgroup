@@ -24,7 +24,7 @@ func runShellInit(args []string, out io.Writer) error {
 
 const shellApply = `# adbgroup shell integration; safe to load repeatedly.
 _adbgroup_apply() {
-    local _ag_file="$1" _ag_action _ag_socket _ag_context _ag_status
+    local _ag_file="$1" _ag_action _ag_socket _ag_context _ag_group _ag_status
     shift
     if ADBGROUP_SHELL_STATE_FILE="$_ag_file" command adg "$@"; then
         _ag_status=0
@@ -37,11 +37,12 @@ _adbgroup_apply() {
     {
         IFS= read -r _ag_action &&
         IFS= read -r _ag_socket &&
-        IFS= read -r _ag_context
+        IFS= read -r _ag_context &&
+        IFS= read -r _ag_group
     } < "$_ag_file" || return 1
     case "$_ag_action" in
         set)
-            [ -n "$_ag_socket" ] && [ -n "$_ag_context" ] || return 1
+            [ -n "$_ag_socket" ] && [ -n "$_ag_context" ] && [ -n "$_ag_group" ] || return 1
             if [ "${_ADBGROUP_HAS_SAVED-}" != 1 ]; then
                 _ADBGROUP_SAVED_SOCKET_SET="${ADB_SERVER_SOCKET+x}"
                 _ADBGROUP_SAVED_SOCKET="${ADB_SERVER_SOCKET-}"
@@ -49,6 +50,7 @@ _adbgroup_apply() {
             fi
             export ADB_SERVER_SOCKET="$_ag_socket"
             export ADBGROUP_CONTEXT="$_ag_context"
+            export ADBGROUP_GROUP="$_ag_group"
             ;;
         unset)
             if [ "${_ADBGROUP_HAS_SAVED-}" = 1 ]; then
@@ -58,7 +60,7 @@ _adbgroup_apply() {
                     unset ADB_SERVER_SOCKET
                 fi
             fi
-            unset ADBGROUP_CONTEXT _ADBGROUP_HAS_SAVED _ADBGROUP_SAVED_SOCKET_SET _ADBGROUP_SAVED_SOCKET
+            unset ADBGROUP_CONTEXT ADBGROUP_GROUP _ADBGROUP_HAS_SAVED _ADBGROUP_SAVED_SOCKET_SET _ADBGROUP_SAVED_SOCKET
             ;;
         *) return 1 ;;
     esac
