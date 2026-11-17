@@ -243,7 +243,7 @@ Selection lives in the current shell environment and does not modify `tunnel.yam
 
 `ADBGROUP_GROUP` contains the group name selected by the last successful `adg use`, for shell prompts and scripts. A failed or cancelled switch leaves it unchanged; `adg unuse` unsets it. After upgrading, reload shell integration in existing terminals to enable this variable.
 
-`t/tunnel` retains its existing port and output behavior; shell integration only wraps `use/unuse`. Without integration, these commands print setup instructions without creating a tunnel. This release upgrades the daemon control protocol to v3: use the old binary to run `adbgroup daemon stop` before upgrading, then submit your tunnels again with `adg`.
+`t/tunnel` retains its existing port and output behavior; shell integration only wraps `use/unuse`. Without integration, these commands print setup instructions without creating a tunnel. This release upgrades the daemon control protocol to v3: use the old `adg` binary to run `adg daemon stop` before upgrading, then submit your tunnels again with the new binary.
 
 After a managed normal tunnel has connected successfully, server restarts and network outages change its state to `reconnecting`. The daemon retains the local port, group, and local tunnel ID, reloads credentials, and establishes a fresh authenticated remote session. New ADB requests receive `FAIL` while unavailable; existing connections end. Once connected again, subsequent ADB commands work through the same socket without another `use`. Forward/reverse rules must be recreated, and commands are never replayed.
 

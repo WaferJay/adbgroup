@@ -233,7 +233,7 @@ adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 
 `ADBGROUP_GROUP` 保存最近一次成功执行 `adg use` 选中的组名，方便 shell 提示符和脚本使用。切换失败或取消时保留原值，`adg unuse` 时清除。升级后，已有终端需重新加载 shell 集成才能启用该变量。
 
-`t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v3；升级前请用旧版本二进制执行 `adbgroup daemon stop`，升级后通过 `adg` 重新提交 tunnel。
+`t/tunnel` 保持原有端口及输出行为，shell 集成只包装 `use/unuse`。未启用集成时，`use/unuse` 会提示初始化，且不创建 tunnel。本版本将 daemon 控制协议升级为 v3；升级前请用旧版本 `adg` 二进制执行 `adg daemon stop`，升级后通过新版本二进制重新提交 tunnel。
 
 普通托管 tunnel 首次连接成功后，server 重启或网络断开会使其进入 `reconnecting`。daemon 保留原本地端口、分组和本地 tunnel ID，重新读取凭据并建立新的认证会话。不可用期间新 ADB 请求立即返回 `FAIL`，已有连接结束；恢复后后续命令通过原 socket 即可访问，无需再次 `use`。forward/reverse 规则需要重新创建，ADB 命令不会重放。
 
