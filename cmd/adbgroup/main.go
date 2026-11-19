@@ -58,6 +58,9 @@ func load(path string) (gateway.Config, error) {
 }
 func main() {
 	if err := run(); err != nil && !errors.Is(err, flag.ErrHelp) {
+		if err == errShellNeedsDefault {
+			os.Exit(125) // Private handshake with the shell-init wrapper.
+		}
 		slog.Error("adg stopped", "error", err)
 		os.Exit(1)
 	}
@@ -160,24 +163,24 @@ func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
 	}
 }
 
-func (o *tunnelOptions) loadConfig(path string, flags *flag.FlagSet) (tunnelFile, error) {
+func (o *tunnelOptions) loadConfig(path string, flags *flag.FlagSet) error {
 	c, found, err := loadTunnelFile(path)
 	if err != nil {
-		return c, fmt.Errorf("load client config %s: %w", path, err)
+		return fmt.Errorf("load client config %s: %w", path, err)
 	}
 	if !found && flagWasSet(flags, "config", "f") {
-		return c, fmt.Errorf("client config %s does not exist", path)
+		return fmt.Errorf("client config %s does not exist", path)
 	}
 	o.applyFile(c, flags)
-	return c, nil
+	return nil
 }
 
 func bindClientFlags(flags *flag.FlagSet) *tunnelOptions {
 	o := &tunnelOptions{server: defaultTunnelServer, listen: "127.0.0.1:15037", credentials: "."}
 	flags.StringVar(&o.server, "server", o.server, "HTTPS server origin")
 	flags.StringVar(&o.server, "s", o.server, "short for -server")
-	flags.StringVar(&o.group, "group", "", "group (auto-selected when only one is authorized)")
-	flags.StringVar(&o.group, "g", "", "short for -group")
+	flags.StringVar(&o.group, "group", "", "legacy explicit group selector")
+	flags.StringVar(&o.group, "g", "", "legacy short form of -group")
 	flags.StringVar(&o.credentials, "credentials", o.credentials, "directory containing client.pem, client.key and ca.pem")
 	flags.StringVar(&o.credentials, "d", o.credentials, "short for -credentials")
 	flags.StringVar(&o.cert, "cert", "", "client certificate (defaults to CREDENTIALS/client.pem)")
@@ -221,17 +224,97 @@ func canonicalCommand(command string) string {
 	return command
 }
 
+var errShellNeedsDefault = errors.New("shell must select the configured group")
+
+func runClientCommand(command string, args []string, shellMode string) error {
+	if command == "tunnel" && len(args) > 0 && (args[0] == "list" || args[0] == "stop") {
+		if shellMode == "--shell-select-default" {
+			return nil
+		}
+		return runTunnelCommand(args, os.Stdout)
+	}
+	flags := newCommandFlags(command)
+	path, err := defaultTunnelConfig()
+	if err != nil {
+		return err
+	}
+	file := flags.String("config", path, "configuration file")
+	flags.StringVar(file, "f", path, "short for -config")
+	var o *tunnelOptions
+	var noDaemon, jsonOutput bool
+	if command == "tunnel" {
+		o = bindTunnelFlags(flags)
+		flags.BoolVar(&noDaemon, "no-daemon", false, "run the tunnel in the foreground")
+	} else {
+		o = bindClientFlags(flags)
+		flags.BoolVar(&jsonOutput, "json", false, "print JSON instead of a table")
+	}
+	if err := parseClientGroupArgs(flags, args); err != nil {
+		return err
+	}
+	if err := o.loadConfig(*file, flags); err != nil {
+		return err
+	}
+	if shellMode != "" {
+		needsDefault := o.group != "" && !flagWasSet(flags, "g", "group") && currentSelection() == nil
+		if shellMode == "--shell-select-default" {
+			if !needsDefault {
+				return nil
+			}
+			if err := requireShell(); err != nil {
+				return err
+			}
+			return o.activateTerminalGroup(o.group, io.Discard)
+		}
+		if needsDefault {
+			return errShellNeedsDefault
+		}
+	}
+	var currentGroup string
+	if command != "tunnel" {
+		if active := applySelection(o, flags); active != nil {
+			currentGroup = active.Config.Group
+		}
+	} else if !noDaemon {
+		return startManagedTunnel(o, os.Stdout)
+	}
+	cert, key, ca := o.credentialFiles()
+	client, err := tunnel.NewClient(o.server, cert, key, ca)
+	if err != nil {
+		return err
+	}
+	defer client.CloseIdleConnections()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if command == "tunnel" {
+		return client.Run(ctx, o.group, o.lease, o.listen)
+	}
+	return runQuery(ctx, client, command, o.group, currentGroup, jsonOutput, os.Stdout)
+}
+
 func run() error {
 	if len(os.Args) < 2 {
-		printUsage(os.Stderr)
-		return errors.New("a command is required")
+		return runUse(nil, os.Stdout)
 	}
 	command := canonicalCommand(os.Args[1])
 	switch command {
 	case "-h", "-help", "--help":
 		printUsage(os.Stdout)
 		return flag.ErrHelp
-	case "check", "serve", "cert", "tunnel", "groups", "devices", "daemon":
+	case "check", "serve", "cert":
+	case "devices", "groups", "tunnel":
+		return runClientCommand(command, os.Args[2:], "")
+	case "--shell-client", "--shell-select-default":
+		if len(os.Args) < 3 {
+			return errors.New("devices or tunnel command required")
+		}
+		clientCommand := canonicalCommand(os.Args[2])
+		if clientCommand != "devices" && clientCommand != "tunnel" {
+			return errors.New("devices or tunnel command required")
+		}
+		return runClientCommand(clientCommand, os.Args[3:], command)
+	case "daemon":
+		return runDaemonCommand(os.Args[2:], os.Stdout)
 	case "shell-init":
 		return runShellInit(os.Args[2:], os.Stdout)
 	case "use":
@@ -239,44 +322,12 @@ func run() error {
 	case "unuse":
 		return runUnuse(os.Args[2:])
 	default:
-		if len(os.Args) == 2 && !strings.HasPrefix(command, "-") {
-			printUsage(os.Stderr)
-			return fmt.Errorf("unknown command %q; to run adb, use adg GROUP <adb arguments>", command)
-		}
-		return runGroupADB(os.Args[1:])
+		return runGroupCommand(os.Args[1:])
 	}
-	if command == "daemon" {
-		return runDaemonCommand(os.Args[2:], os.Stdout)
-	}
-	if command == "tunnel" && len(os.Args) > 2 && (os.Args[2] == "list" || os.Args[2] == "stop") {
-		return runTunnelCommand(os.Args[2:], os.Stdout)
-	}
-	clientCommand := command == "tunnel" || command == "groups" || command == "devices"
 	flags := newCommandFlags(command)
-	configDefault := "config.yaml"
-	if clientCommand {
-		var err error
-		configDefault, err = defaultTunnelConfig()
-		if err != nil {
-			return err
-		}
-	}
-	file := flags.String("config", configDefault, "configuration file")
+	file := flags.String("config", "config.yaml", "configuration file")
 	var user, identity, out, caKey, caCert *string
 	var days *int
-	var tunnelFlags *tunnelOptions
-	var jsonOutput bool
-	var noDaemon bool
-	if clientCommand {
-		if command == "tunnel" {
-			tunnelFlags = bindTunnelFlags(flags)
-			flags.BoolVar(&noDaemon, "no-daemon", false, "run the tunnel in the foreground")
-		} else {
-			tunnelFlags = bindClientFlags(flags)
-			flags.BoolVar(&jsonOutput, "json", false, "print JSON instead of a table")
-		}
-		flags.StringVar(file, "f", configDefault, "short for -config")
-	}
 	if command == "cert" {
 		user = flags.String("user", "", "user name (identity becomes spiffe://adbgroup/USER)")
 		identity = flags.String("identity", "", "explicit identity URI, instead of -user")
@@ -291,33 +342,6 @@ func run() error {
 	if flags.NArg() != 0 {
 		flags.Usage()
 		return errors.New("unexpected positional arguments")
-	}
-	if clientCommand {
-		configured, err := tunnelFlags.loadConfig(*file, flags)
-		if err != nil {
-			return err
-		}
-		markers := groupMarkers{Default: configured.Group}
-		if command != "tunnel" {
-			if active := applySelection(tunnelFlags, flags); active != nil {
-				markers.Current = active.Config.Group
-			}
-		}
-		if command == "tunnel" && !noDaemon {
-			return startManagedTunnel(tunnelFlags, os.Stdout)
-		}
-		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
-		client, err := tunnel.NewClient(tunnelFlags.server, clientCert, clientKey, serverCA)
-		if err != nil {
-			return err
-		}
-		defer client.CloseIdleConnections()
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-		if command != "tunnel" {
-			return runQuery(ctx, client, command, tunnelFlags.group, jsonOutput, os.Stdout, markers)
-		}
-		return client.Run(ctx, tunnelFlags.group, tunnelFlags.lease, tunnelFlags.listen)
 	}
 	cfg, err := load(*file)
 	if err != nil {

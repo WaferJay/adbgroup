@@ -23,6 +23,43 @@ func runShellInit(args []string, out io.Writer) error {
 }
 
 const shellApply = `# adbgroup shell integration; safe to load repeatedly.
+adg() {
+    # Only the group-scoped built-ins participate. Go parses their options
+    # before requesting a selection, so help and explicit groups pass through.
+    if [ "${1-}" = devices ] || [ "${1-}" = d ] || [ "${1-}" = tunnel ] || [ "${1-}" = t ]; then
+        local _ag_status
+        if command adg --shell-client "$@"; then return 0; else _ag_status=$?; fi
+        [ "$_ag_status" -eq 125 ] || return "$_ag_status"
+        _adbgroup_switch --shell-select-default "$@" || return $?
+    elif _adbgroup_changes_selection "$@"; then
+        _adbgroup_switch "$@"
+        return $?
+    fi
+    command adg "$@"
+}
+
+_adbgroup_changes_selection() {
+    [ "$#" -eq 0 ] && return 0
+    # Command names are case-sensitive even when the shell ignores case in patterns.
+    if [ "${1-}" = use ] || [ "${1-}" = unuse ]; then return 0; fi
+    local _ag_cmd
+    for _ag_cmd in check serve cert groups g daemon shell-init; do
+        [ "${1-}" != "$_ag_cmd" ] || return 1
+    done
+    # Connection options take a value. The group ends option parsing, so any
+    # remaining adb arguments must bypass the state file and signal traps.
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -g|--g|-group|--group) [ "$#" -eq 2 ]; return ;;
+            -g=*|--g=*|-group=*|--group=*) [ "$#" -eq 1 ]; return ;;
+            -*=*) shift ;;
+            -*) [ "$#" -ge 2 ] || return 1; shift 2 ;;
+            *) [ "$#" -eq 1 ]; return ;;
+        esac
+    done
+    return 1
+}
+
 _adbgroup_apply() {
     local _ag_file="$1" _ag_action _ag_socket _ag_context _ag_group _ag_status
     shift
@@ -67,11 +104,7 @@ _adbgroup_apply() {
 }
 `
 
-const zshSwitch = `adg() {
-    case "${1-}" in
-        use|unuse) ;;
-        *) command adg "$@"; return $? ;;
-    esac
+const zshSwitch = `_adbgroup_switch() {
     local _ag_temp
     _ag_temp=$(command mktemp "${TMPDIR:-/tmp}/adbgroup-shell.XXXXXXXX") || return
     {
@@ -82,11 +115,7 @@ const zshSwitch = `adg() {
 }
 `
 
-const bashSwitch = `adg() {
-    case "${1-}" in
-        use|unuse) ;;
-        *) command adg "$@"; return $? ;;
-    esac
+const bashSwitch = `_adbgroup_switch() {
     local _ag_temp _ag_result=0 _ag_interrupted=0 _ag_old_int _ag_old_term
     _ag_temp=$(command mktemp "${TMPDIR:-/tmp}/adbgroup-shell.XXXXXXXX") || return
     _ag_old_int=$(trap -p INT)

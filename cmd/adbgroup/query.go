@@ -16,11 +16,7 @@ type inventoryClient interface {
 	ListDevices(context.Context, string) ([]gateway.Device, error)
 }
 
-type groupMarkers struct {
-	Default, Current string
-}
-
-func runQuery(parent context.Context, client inventoryClient, command, group string, jsonOutput bool, out io.Writer, markers ...groupMarkers) error {
+func runQuery(parent context.Context, client inventoryClient, command, group, currentGroup string, jsonOutput bool, out io.Writer) error {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 	if command == "groups" {
@@ -32,22 +28,15 @@ func runQuery(parent context.Context, client inventoryClient, command, group str
 			return printJSON(out, groups)
 		}
 		w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-		if _, err := fmt.Fprintln(w, "NAME\tDEVICES\tDEFAULT\tCURRENT"); err != nil {
+		if _, err := fmt.Fprintln(w, "  NAME\tDEVICES"); err != nil {
 			return err
 		}
-		m := groupMarkers{Default: group}
-		if len(markers) > 0 {
-			m = markers[0]
-		}
 		for _, g := range groups {
-			selected, current := "", ""
-			if g.Name == m.Default {
-				selected = "*"
+			currentMark := " "
+			if g.Name == currentGroup {
+				currentMark = "*"
 			}
-			if g.Name == m.Current {
-				current = "*"
-			}
-			if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", g.Name, len(g.Devices), selected, current); err != nil {
+			if _, err := fmt.Fprintf(w, "%s %s\t%d\n", currentMark, g.Name, len(g.Devices)); err != nil {
 				return err
 			}
 		}

@@ -19,7 +19,8 @@ bin/adg check -config config.yaml
 bin/adg serve -config config.yaml
 ```
 
-Running without arguments displays usage. `adg -help` (or `-h`, `--help`) lists commands.
+`adg --help` (or `-h`, `-help`) lists commands. In an interactive terminal with
+shell integration enabled, `adg` and `adg use` both open the group selection menu.
 Use `adg <command> -help` to see flags and defaults, for example `adg t -help`,
 `adg t stop -help`, or `adg daemon -help`. Help commands exit successfully without
 reading configuration or starting services.
@@ -136,7 +137,7 @@ Serial and model grouping require a `source` naming an enabled summary or a stat
 
 `inherit_access` defaults to false. When enabled, a direct grant to a static, summary, or model group also grants the corresponding serial groups. Serial grants do not grant access to other groups. In this example Bob can select serial groups for devices in `model-Pixel_8`. Summary grants include future members. Identities may preauthorize future serial or model names when the corresponding rule is enabled.
 
-A complete `"*"` entry in identities grants every existing and future group, including static and automatic groups. Partial patterns such as `model-*` are unsupported. Wildcards do not bypass group existence, device availability, active write leases, or physical device locks. Quote `"*"` in YAML. Clients with multiple authorized groups still need an explicit `-g` or `adg use <group>` selection.
+A complete `"*"` entry in identities grants every existing and future group, including static and automatic groups. Partial patterns such as `model-*` are unsupported. Wildcards do not bypass group existence, device availability, active write leases, or physical device locks. Quote `"*"` in YAML. If several groups are authorized, you can target one directly with `adg GROUP <adb arguments>` or select one for the current terminal with `adg GROUP` after shell initialization.
 
 All groups share one namespace. Conflicts known from configuration reject startup or reload. Runtime conflicts are logged and conflicting generated groups are withheld; static and summary groups remain intact. Changes to `auto_groups` require restart. Membership, identity, or model changes recompute groups and authorization, closing invalid accesses and revoking affected leases.
 
@@ -201,12 +202,12 @@ With Android Platform Tools' `adb` on your PATH, put the group name before the a
 adg team-a devices -l                     # List devices in team-a
 adg team-b -s USB_SERIAL_B shell          # Open a shell on one device in team-b
 adg -f staging.yaml team-a devices        # Use a different client config
-adg -g devices devices -l                 # The group itself is named "devices"
+adg @devices devices -l                   # The group itself is named "devices"
 ```
 
-Put client connection options before the group. For example, `-s` before the group selects the gateway server, and `-s` after the group selects an adb serial. Built-in command names and aliases take precedence in the first position. Use `-g GROUP` to select any group explicitly, including one named `devices` or `t`.
+Put client connection options before the group. For example, `-s` before the group selects the gateway server, and `-s` after the group selects an adb serial. Built-in commands and aliases take precedence in the first position. Prefix a group name with `@` to select it explicitly. Scripts can use `adg "@$group" devices -l` for any group name, including a command or alias. To address a group named `@lab`, write `@@lab`. Existing scripts can continue to use `-g GROUP` or `-group GROUP`.
 
-The daemon reuses a normal tunnel for the server, credentials, and group, or opens one on an available loopback port. The group applies only to this invocation, even inside a shell with another group selected. The native adb process gets the original argument boundaries, standard input, output, and error streams. Its exit status is the command's exit status. The tunnel supplies the ADB server endpoint, so native adb server options `-H`, `-P`, and `-L` conflict with group selection. For a write lease, use `adg t -w <lease-id>`.
+The daemon reuses a normal tunnel for the server, credentials, and group, or opens one on an available loopback port. A one-off command uses its own client configuration and group, even inside a shell with another gateway or group selected. The native adb process gets the original argument boundaries, standard input, output, and error streams. Its exit status is the command's exit status. The tunnel supplies the ADB server endpoint, so native adb server options `-H`, `-P`, and `-L` conflict with group selection. For a write lease, use `adg t -w <lease-id>`.
 
 ### Start a local tunnel
 
@@ -219,8 +220,9 @@ adg t
 By default, `t` automatically starts a background daemon for the current user, hands the tunnel to it, and returns once the local listener is ready. The tunnel keeps running after the terminal closes. One daemon can manage tunnels to multiple servers or groups, with a different local listening port for each tunnel:
 
 ```sh
-adg t -g team-a -l 15037
-adg t -g team-b -l 15038
+adg t team-a -l 15037
+adg t team-b -l 15038
+adg t @list -l 15040   # Start a tunnel for the group named "list"
 adg t list             # ID, server, group, listener, status, latest error
 adg t list --json
 adg t stop <id>        # Stop and remove a tunnel
@@ -234,7 +236,9 @@ adg t --no-daemon      # Run in the foreground; exit with Ctrl-C
 
 A successful startup prints the tunnel ID and `export ADB_SERVER_SOCKET=tcp:127.0.0.1:<port>`. Set that environment variable in the terminal running adb or Appium to select the tunnel. Submitting the same parameters again reuses an existing tunnel. Using different settings for the same listening address causes a conflict; stop the old tunnel first.
 
-For convenient group switching in the current terminal, add this line to `~/.zshrc` and run it once in the current terminal:
+### Select a group for the current terminal
+
+With shell integration, `adg GROUP` is shorthand for `adg use GROUP`. Subsequent `adb` commands in that terminal use the selected group. To enable this in zsh, add the following line to `~/.zshrc` and run it in your current terminal.
 
 ```sh
 eval "$(command adg shell-init zsh)"
@@ -242,27 +246,34 @@ eval "$(command adg shell-init zsh)"
 
 For bash, use `eval "$(command adg shell-init bash)"` in the startup file your terminal loads (usually `~/.bashrc`; login shells should source it from `~/.bash_profile`). Initialization is safe to repeat and does not edit these files automatically.
 
+In a terminal with shell integration and no selected group, the first device query (`adg devices` or `adg d`) or tunnel creation (`adg tunnel` or `adg t`) without a group name selects the group from the client configuration, then runs the command. For example, with `group: team-a` this has the same effect on the shell as `adg use team-a`. A profile passed with `-f` supplies its own default. Automatic selection applies only while the terminal has no selected group.
+
 ```sh
-adg use team-a         # Create or reuse a tunnel and select it in this shell
-echo "$ADBGROUP_GROUP" # team-a; also exported to child processes
-adb devices -l
-adg use team-b         # Switch groups, keeping the previous tunnel running
-adg use                # Numbered menu; Enter/q cancels; requires a terminal
+adg devices --json     # Select the configured team-a and print its gateway inventory
+adb devices -l         # List devices in team-a
+adg team-b devices -l  # List devices in team-b once
+echo "$ADBGROUP_GROUP" # Still team-a
+adg @devices           # Select a group named "devices" (also: adg use @devices)
+adg                    # Open the same menu as adg use. Press Enter or q to cancel.
 adg d                  # Query the currently selected group
-adg g                  # DEFAULT marks the configured group; CURRENT the selection
+adg g                  # A leading * marks the group selected in this terminal
 adg unuse              # Restore ADB_SERVER_SOCKET from before the first use
 
 # Explicit connection settings are retained by subsequent use/g/d calls
 adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 ```
 
+`adg g`, help, `adg t list`, and `adg t stop` leave the terminal selection untouched. Passing a group name to a device query or tunnel command selects the target for that invocation only. In a fresh terminal without a configured `group:`, a group-dependent command can still use the sole authorized group for that invocation. With multiple authorized groups, specify one.
+
 `use` matches normal tunnels by server, credential paths, and group, including tunnels created with `t`. If none matches, the OS assigns a loopback port; the configured `listen` is not used. Matching tunnels are preferred in active, starting, reconnecting, then failed order, with ties ordered by tunnel ID. For reconnecting tunnels, `use` waits for recovery without creating another listener; cancelling that wait leaves reconnection running. Failed tunnels are retried explicitly. A failed or cancelled switch preserves the previous selection. `use` does not select write leases; continue using `t -w` for write access.
 
-Selection lives in the current shell environment and does not modify `tunnel.yaml`. adb/Appium processes subsequently launched from that shell inherit the socket; existing processes keep their environment. An explicit `-g` overrides the selected group for `g/d`. Explicit configuration, server, or credential options use the original client configuration rules instead of the selection. If you change `ADB_SERVER_SOCKET` manually, a selection context that no longer matches is ignored.
+Selection lives in the current shell environment and does not modify `tunnel.yaml`. adb/Appium processes subsequently launched from that shell inherit the socket; existing processes keep their environment. Explicit configuration, server, or credential options use the original client configuration rules instead of the selection. If you change `ADB_SERVER_SOCKET` manually, a selection context that no longer matches is ignored.
 
-`ADBGROUP_GROUP` contains the group name selected by the last successful `adg use`, for shell prompts and scripts. A failed or cancelled switch leaves it unchanged; `adg unuse` unsets it. After upgrading, reload shell integration in existing terminals to enable this variable.
+`ADBGROUP_GROUP` contains the name of the group currently selected in this shell, for prompts and scripts. A failed or cancelled switch preserves the previous value. `adg unuse` unsets it. After upgrading, run the shell initialization line again in existing terminals to enable the shorthand.
 
-`t/tunnel` retains its existing port and output behavior; shell integration only wraps `use/unuse`. Without integration, these commands print setup instructions without creating a tunnel. This release upgrades the daemon control protocol to v3: use the old `adg` binary to run `adg daemon stop` before upgrading, then submit your tunnels again with the new binary.
+In a shell without integration, `adg devices` and `adg t` use the configured group for that invocation only. Switching the terminal group and `adg unuse` show setup instructions. To run adb once, append its arguments to the group, as in `adg team-a devices -l`.
+
+When upgrading to daemon control protocol v3, run `adg daemon stop` with the old binary before upgrading, then submit your tunnels again with the new binary.
 
 After a managed normal tunnel has connected successfully, server restarts and network outages change its state to `reconnecting`. The daemon retains the local port, group, and local tunnel ID, reloads credentials, and establishes a fresh authenticated remote session. New ADB requests receive `FAIL` while unavailable; existing connections end. Once connected again, subsequent ADB commands work through the same socket without another `use`. Forward/reverse rules must be recreated, and commands are never replayed.
 
@@ -283,21 +294,21 @@ adb -s USB_SERIAL_A push app.apk /data/local/tmp/
 adb -s USB_SERIAL_A install app.apk
 ```
 
-`t` is an alias for `tunnel`. The short flags `-s/-g/-l/-d/-w/-f` correspond to `-server/-group/-listen/-credentials/-lease/-config`. Command-line flags override the configuration file. Without a default configuration file, the built-in server is `https://127.0.0.1:8443`, the credentials directory is the current directory, and the local listener is `127.0.0.1:15037`. If no group is configured and the certificate identity is authorized for exactly one group, that group is selected automatically. Use `-g` when multiple groups are authorized. Existing long flags and individual `-cert/-key/-ca` flags remain supported; the latter override credential directory defaults.
+`t` is an alias for `tunnel`. The short flags `-s/-l/-d/-w/-f` correspond to `-server/-listen/-credentials/-lease/-config`. Command-line flags override the configuration file. Without a default configuration file, the built-in server is `https://127.0.0.1:8443`, the credentials directory is the current directory, and the local listener is `127.0.0.1:15037`. If no group is configured and the certificate identity is authorized for exactly one group, that group is selected automatically. With multiple authorized groups, supply a group name such as `adg t team-a`. The individual `-cert`, `-key`, and `-ca` flags override credential directory defaults.
 
 `-l 15038` is equivalent to `-l 127.0.0.1:15038`. The configuration file also accepts `listen: 15038`. Full numeric IPv4/IPv6 loopback addresses remain supported.
 
-`groups/g` and `devices/d` query the REST API directly, using the same default client configuration and mTLS credentials without starting a tunnel:
+`groups/g` and `devices/d` query the gateway's REST API directly with the client configuration and mTLS credentials.
 
 ```sh
-adg g                  # Authorized groups and device counts; * marks the default
-adg d                  # Default group's devices, connection states, and lock states
-adg d -g team-b         # Devices in a specific group, including offline devices
+adg g                  # List authorized groups (NAME) and their device counts (DEVICES)
+adg d                  # Devices, connection states, and lock states in the selected group
+adg d team-b           # Devices in a specific group, including offline devices
 adg g --json            # Group list as JSON
-adg d -g team-b --json  # Device list as JSON for scripts
+adg d @devices --json  # Inventory for the group named "devices" as JSON
 ```
 
-Query commands accept `-s/-g/-d/-f`, their long forms, and `-cert/-key/-ca`. Command-line flags override the configuration file. If no group is specified or configured for a device query, automatic selection requires exactly one authorized group; otherwise, specify `-g`. Failed queries return a nonzero exit code, errors go to stderr, and JSON results go separately to stdout.
+Query commands accept `-s/-d/-f`, their long forms, and `-cert/-key/-ca`. Command-line flags override the configuration file. Failed queries return a nonzero exit code, errors go to stderr, and JSON results go separately to stdout.
 
 The tunnel authenticates with the remote server before opening the local listener and accepts only numeric loopback addresses. The local port is the client's trust boundary: any process on the same machine that can connect to it can use it. The server reauthorizes every data channel against the certificate identity and selected group. Port numbers, source IPs, and tunnel IDs do not replace identity.
 
@@ -346,7 +357,7 @@ The response includes status `201`, a `Location` header pointing to the canonica
 
 ```sh
 adg t -s https://adb-host.example:8443 -d run/clients/alice \
-  -g team-a -w LEASE_ID -l 15039
+  team-a -w LEASE_ID -l 15039
 adb -H 127.0.0.1 -P 15039 -s USB_SERIAL_A shell
 ```
 

@@ -153,7 +153,7 @@ func (c *Client) resolveGroup(ctx context.Context, group string) (string, error)
 	for i, group := range groups {
 		names[i] = group.Name
 	}
-	return "", fmt.Errorf("multiple groups authorized (%s); choose one with -group or -g", strings.Join(names, ", "))
+	return "", fmt.Errorf("multiple groups authorized (%s); specify a group as @GROUP", strings.Join(names, ", "))
 }
 
 // Run owns the local ADB listener and every associated data socket. It never

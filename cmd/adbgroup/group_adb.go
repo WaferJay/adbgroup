@@ -11,44 +11,39 @@ import (
 	"syscall"
 )
 
-// Parse connection options one at a time: either GROUP or -g GROUP ends
-// adg's options immediately, even when adb's first argument is another flag.
+// A group ends adg option parsing. Everything after it belongs to adb.
 func parseGroupArgs(flags *flag.FlagSet, o *tunnelOptions, args []string) (string, []string, error) {
 	for len(args) > 0 {
 		arg := args[0]
 		if !strings.HasPrefix(arg, "-") {
 			if _, reserved := commandHelp[canonicalCommand(arg)]; reserved {
-				return "", nil, fmt.Errorf("%q is an adg command; use -g %s to select that group", arg, arg)
+				return "", nil, fmt.Errorf("%q is an adg command; use @%s to select that group", arg, arg)
 			}
-			if arg == "" || len(args) == 1 {
-				return "", nil, errors.New("expected GROUP followed by adb arguments")
+			group, err := positionalGroupName(arg)
+			if err != nil {
+				return "", nil, err
 			}
-			return arg, args[1:], nil
+			return group, args[1:], nil
 		}
 		if arg == "-" || arg == "--" {
-			return "", nil, errors.New("use -g GROUP to select a group explicitly")
+			return "", nil, errors.New("use @GROUP to select a group explicitly")
 		}
-		name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-		n := 1
-		// Every registered connection option takes one string value.
-		if !inline && flags.Lookup(name) != nil && len(args) > 1 {
-			n++
-		}
-		if err := flags.Parse(args[:n]); err != nil {
+		var err error
+		args, err = parseGroupOption(flags, args)
+		if err != nil {
 			return "", nil, err
 		}
-		args = args[n:]
-		if name == "g" || name == "group" {
+		if flagWasSet(flags, "group", "g") {
 			if o.group == "" {
 				return "", nil, errors.New("group name cannot be empty")
 			}
 			return o.group, args, nil
 		}
 	}
-	return "", nil, errors.New("a group is required; use adg GROUP <adb arguments>")
+	return "", nil, errors.New("a group is required; use adg GROUP or adg @GROUP")
 }
 
-func runGroupADB(args []string) error {
+func runGroupCommand(args []string) error {
 	flags := flag.NewFlagSet("adg", flag.ContinueOnError)
 	flags.Usage = func() { printUsage(flags.Output()) }
 	o := bindClientFlags(flags)
@@ -62,6 +57,12 @@ func runGroupADB(args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(adbArgs) == 0 {
+		if err := requireShell(); err != nil {
+			return fmt.Errorf("%w; for a one-off adb command, append 'devices -l' to this invocation", err)
+		}
+		return o.selectTerminalGroup(group, *file, flags, os.Stdout)
+	}
 	if err := validateADBRoute(adbArgs); err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func runGroupADB(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := o.loadConfig(*file, flags); err != nil {
+	if err := o.loadConfig(*file, flags); err != nil {
 		return err
 	}
 	s, err := o.ensureGroupTunnel(group)

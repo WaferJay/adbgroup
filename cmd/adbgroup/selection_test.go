@@ -88,13 +88,20 @@ func TestMenuChoicesAndGroupMarkers(t *testing.T) {
 			t.Fatalf("invalid choice accepted: %q", input)
 		}
 	}
-	var out bytes.Buffer
-	if err := runQuery(context.Background(), &inventoryStub{groups: groups}, "groups", "b", false, &out, groupMarkers{Default: "a", Current: "b"}); err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if !strings.Contains(lines[0], "CURRENT") || !strings.Contains(lines[1], "*") || !strings.Contains(lines[2], "*") {
-		t.Fatal(out.String())
+	for _, tc := range []struct{ current, rowA, rowB string }{
+		{"b", "  a ", "* b "},
+		{"a", "* a ", "  b "},
+		{"", "  a ", "  b "},
+	} {
+		var out bytes.Buffer
+		if err := runQuery(context.Background(), &inventoryStub{groups: groups}, "groups", "a", tc.current, false, &out); err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+		if len(lines) != 3 || !strings.HasPrefix(lines[0], "  NAME ") ||
+			!strings.HasPrefix(lines[1], tc.rowA) || !strings.HasPrefix(lines[2], tc.rowB) {
+			t.Errorf("unexpected group markers for current %q:\n%s", tc.current, out.String())
+		}
 	}
 }
 
@@ -127,7 +134,11 @@ func TestShellSwitchWithMTLS(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(pem)
-	cfg := gateway.Config{Groups: []gateway.Group{{Name: "a", Devices: []string{"DEVICE_A"}}, {Name: "b", Devices: []string{"DEVICE_B"}}}, Identities: map[string][]string{"spiffe://adbgroup/alice": {"a", "b"}}}
+	cfg := gateway.Config{
+		Groups:     []gateway.Group{{Name: "source", Devices: []string{"DEVICES"}}, {Name: "devices", Devices: []string{"DEVICE_B"}}},
+		AutoGroups: gateway.AutoGroupsConfig{Serial: gateway.SerialGroupConfig{Enabled: true, Source: "source"}},
+		Identities: map[string][]string{"spiffe://adbgroup/alice": {"DEVICES", "devices"}},
+	}
 	cfg.Defaults()
 	e := gateway.NewEngine(cfg)
 	g := gateway.NewGateway(e, gateway.Backend{})
@@ -151,7 +162,35 @@ func TestShellSwitchWithMTLS(t *testing.T) {
 	if err := os.Symlink(executable, filepath.Join(bin, "adg")); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "ADBGROUP_TEST_CLI=1", "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"), "TEST_SERVER="+s.URL, "TEST_CREDS="+creds)
+	defaultConfig := filepath.Join(home, tunnelConfigPath)
+	if err := os.MkdirAll(filepath.Dir(defaultConfig), 0700); err != nil {
+		t.Fatal(err)
+	}
+	clientConfig := fmt.Sprintf("server: %q\ncredentials: %q\n", s.URL, creds)
+	if err := os.WriteFile(defaultConfig, []byte(clientConfig+"group: DEVICES\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testConfig := filepath.Join(home, "client profile.yaml")
+	if err := os.WriteFile(testConfig, []byte(clientConfig+"group: devices\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const adb = `#!/bin/sh
+set -eu
+[ "${ADBGROUP_SHELL_STATE_FILE-}" = "" ]
+[ "$#" = 6 ]
+[ "$1" = -H ]
+[ "$3" = -P ]
+[ "tcp:$2:$4" = "$EXPECTED_ADB_SOCKET" ]
+[ "$5" = devices ]
+[ "$6" = -l ]
+exit 37
+`
+	if err := os.WriteFile(filepath.Join(bin, "adb"), []byte(adb), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Each shell command runs its own race-instrumented test binary.
+	raceOptions := strings.TrimSpace(os.Getenv("GORACE") + " atexit_sleep_ms=0")
+	env := append(os.Environ(), "ADBGROUP_TEST_CLI=1", "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"), "TEST_SERVER="+s.URL, "TEST_CREDS="+creds, "TEST_CONFIG="+testConfig, "GORACE="+raceOptions)
 	defer func() {
 		cmd := exec.Command(executable, "daemon", "stop")
 		cmd.Env = env
@@ -159,6 +198,20 @@ func TestShellSwitchWithMTLS(t *testing.T) {
 			t.Errorf("daemon cleanup: %v: %s", err, out)
 		}
 	}()
+	t.Run("inventory without shell integration", func(t *testing.T) {
+		cmd := exec.Command(executable, "devices", "--json")
+		cmd.Env = append(env, "ADBGROUP_CONTEXT=", shellStateFile+"=")
+		out, err := cmd.Output()
+		var devices []gateway.Device
+		if err != nil || json.Unmarshal(out, &devices) != nil || len(devices) != 1 || devices[0].Serial != "DEVICES" {
+			t.Fatalf("default group inventory: %v %s", err, out)
+		}
+		cmd = exec.Command(executable, "daemon", "status")
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "daemon stopped" {
+			t.Fatalf("inventory started a daemon: %v %s", err, out)
+		}
+	})
 	for _, shell := range []string{"zsh", "bash"} {
 		for _, original := range []string{"unset", "empty", "custom"} {
 			t.Run(shell+"/"+original, func(t *testing.T) {
@@ -173,45 +226,98 @@ case "$2" in
   empty) export ADB_SERVER_SOCKET='' ;;
   custom) export ADB_SERVER_SOCKET='tcp:127.0.0.1:9999' ;;
 esac
-unset ADBGROUP_CONTEXT ADBGROUP_GROUP
+unset ADBGROUP_CONTEXT ADBGROUP_GROUP ADBGROUP_SHELL_STATE_FILE
 original_set="${ADB_SERVER_SOCKET+x}"
 original_value="${ADB_SERVER_SOCKET-}"
 eval "$(command adg shell-init "$1")"
 eval "$(command adg shell-init "$1")"
-adg use a -s "$TEST_SERVER" -d "$TEST_CREDS"
-[ "$ADBGROUP_GROUP" = a ]
+adg g >/dev/null
+adg devices --help >/dev/null 2>&1
+adg t list --json >/dev/null
+adg t stop --help >/dev/null 2>&1
+if adg devices shell extra >/dev/null 2>&1; then exit 17; fi
+adg devices @devices --json > "$TEST_OUTPUT"
+grep -q DEVICE_B "$TEST_OUTPUT"
+if adg devices -f "$TEST_CONFIG.missing" >/dev/null 2>&1; then exit 16; fi
+[ "${ADBGROUP_CONTEXT+x}" != x ]
+[ "${ADBGROUP_GROUP+x}" != x ]
+[ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
+[ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
+adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
+grep -q DEVICE_B "$TEST_OUTPUT"
+[ "$ADBGROUP_GROUP" = devices ]
+inventory_socket=$ADB_SERVER_SOCKET
+adg unuse
+adb_status=0
+EXPECTED_ADB_SOCKET="$inventory_socket" adg @devices devices -l || adb_status=$?
+[ "$adb_status" = 37 ]
+[ "${ADBGROUP_CONTEXT+x}" != x ]
+[ "${ADBGROUP_GROUP+x}" != x ]
+command adg devices --json > "$TEST_OUTPUT.expected"
+adg devices --json > "$TEST_OUTPUT"
+cmp "$TEST_OUTPUT.expected" "$TEST_OUTPUT"
+[ "$ADBGROUP_GROUP" = DEVICES ]
 first_socket=$ADB_SERVER_SOCKET
 first_context=$ADBGROUP_CONTEXT
+adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
+grep -q DEVICE_B "$TEST_OUTPUT"
+[ "$ADBGROUP_CONTEXT" = "$first_context" ]
+adg -f "$TEST_CONFIG" DEVICES
+[ "$ADBGROUP_CONTEXT" = "$first_context" ]
 [ "$(sh -c 'printf %s "$ADB_SERVER_SOCKET"')" = "$first_socket" ]
-[ "$(sh -c 'printf %s "$ADBGROUP_GROUP"')" = a ]
-case "$(adg d --json)" in *DEVICE_A*) ;; *) exit 10 ;; esac
-adg use b
-[ "$ADBGROUP_GROUP" = b ]
+[ "$(sh -c 'printf %s "$ADBGROUP_GROUP"')" = DEVICES ]
+case "$(adg d --json)" in *DEVICES*) ;; *) exit 10 ;; esac
+adg @devices
+[ "$ADBGROUP_GROUP" = devices ]
 [ "$ADB_SERVER_SOCKET" != "$first_socket" ]
-case "$(adg d --json)" in *DEVICE_B*) ;; *) exit 11 ;; esac
-case "$(adg d -g a --json)" in *DEVICE_A*) ;; *) exit 12 ;; esac
-[ "$ADBGROUP_GROUP" = b ]
-case "$(adg g)" in *CURRENT*) ;; *) exit 13 ;; esac
-adg use a
-[ "$ADBGROUP_GROUP" = a ]
+second_socket=$ADB_SERVER_SOCKET
+second_context=$ADBGROUP_CONTEXT
+case "$(adg devices)" in *DEVICE_B*) ;; *) exit 11 ;; esac
+case "$(adg d --json DEVICES)" in *DEVICES*) ;; *) exit 12 ;; esac
+adb_status=0
+EXPECTED_ADB_SOCKET="$first_socket" adg -f "$TEST_CONFIG" @DEVICES devices -l || adb_status=$?
+[ "$adb_status" = 37 ]
+[ "$ADBGROUP_GROUP" = devices ]
+[ "$ADB_SERVER_SOCKET" = "$second_socket" ]
+[ "$ADBGROUP_CONTEXT" = "$second_context" ]
+adg g | grep -q '^[*] devices ' || exit 13
+case "$1" in
+  bash) shopt -s nocasematch ;;
+  zsh) setopt nocasematch ;;
+esac
+adg DEVICES
+[ "$ADBGROUP_GROUP" = DEVICES ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
-if adg use forbidden; then exit 15; fi
-[ "$ADBGROUP_GROUP" = a ]
+if adg forbidden; then exit 15; fi
+[ "$ADBGROUP_GROUP" = DEVICES ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
-if adg use a -s http://invalid.example; then exit 14; fi
-[ "$ADBGROUP_GROUP" = a ]
+if adg use DEVICES -s http://invalid.example; then exit 14; fi
+[ "$ADBGROUP_GROUP" = DEVICES ]
 [ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
-command adg t -s "$TEST_SERVER" -d "$TEST_CREDS" -g a -l "${first_socket#tcp:}"
-[ "$ADBGROUP_GROUP" = a ]
+adg -f="$TEST_CONFIG" --group=devices
+[ "$ADBGROUP_CONTEXT" = "$second_context" ]
+adg use @DEVICES -s "$TEST_SERVER" -d "$TEST_CREDS"
+command adg t -s "$TEST_SERVER" -d "$TEST_CREDS" -g DEVICES -l "${first_socket#tcp:}"
+[ "$ADBGROUP_GROUP" = DEVICES ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 adg unuse
 [ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
 [ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
 [ "${ADBGROUP_CONTEXT+x}" != x ]
 [ "${ADBGROUP_GROUP+x}" != x ]
+# The requested listener is owned by another group. Selection happened first.
+if adg t -l "${second_socket#tcp:}" > "$TEST_OUTPUT" 2>&1; then exit 18; fi
+[ "$ADBGROUP_CONTEXT" = "$first_context" ]
+adg unuse
+adg t -l "${first_socket#tcp:}" > "$TEST_OUTPUT"
+grep -Fq "group=DEVICES listen=${first_socket#tcp:}" "$TEST_OUTPUT"
+[ "$ADBGROUP_CONTEXT" = "$first_context" ]
+adg unuse
+[ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
+[ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
 adg unuse
 [ "${ADBGROUP_GROUP+x}" != x ]
 printf '\nSHELL_SWITCH_OK\n'
@@ -223,7 +329,7 @@ printf '\nSHELL_SWITCH_OK\n'
 					args = []string{"-f", "-c", script, "test", shell, original}
 				}
 				cmd := exec.CommandContext(commandCtx, path, args...)
-				cmd.Env = append(env, "TMPDIR="+tmp)
+				cmd.Env = append(env, "TMPDIR="+tmp, "TEST_OUTPUT="+filepath.Join(t.TempDir(), "output"))
 				out, err := cmd.CombinedOutput()
 				if err != nil || !strings.Contains(string(out), "SHELL_SWITCH_OK") {
 					t.Fatalf("shell: %v\n%s", err, out)
@@ -237,9 +343,12 @@ printf '\nSHELL_SWITCH_OK\n'
 	}
 	// A PTY exercises /dev/tty selection, including cancellation, in both shells.
 	for _, shell := range []string{"zsh", "bash"} {
-		for _, mode := range []string{"select", "cancel", "interrupt"} {
-			t.Run(fmt.Sprintf("menu/%s/%s", shell, mode), func(t *testing.T) {
-				cancelMenu := mode != "select"
+		for _, tc := range []struct{ command, mode string }{
+			{"adg", "select"}, {"adg", "cancel"}, {"adg", "interrupt"},
+			{"adg use", "select"}, {"adg use", "cancel"}, {"adg use", "interrupt"},
+		} {
+			t.Run(fmt.Sprintf("menu/%s/%s/%s", shell, tc.command, tc.mode), func(t *testing.T) {
+				cancelMenu := tc.mode != "select"
 				tmp := t.TempDir()
 				pidFile := filepath.Join(t.TempDir(), "use.pid")
 				scriptPath := filepath.Join(t.TempDir(), "menu.sh")
@@ -248,9 +357,9 @@ export ADB_SERVER_SOCKET=original
 unset ADBGROUP_CONTEXT
 export ADBGROUP_GROUP=original
 eval "$(command adg shell-init "$TEST_SHELL")"
-if adg use -s "$TEST_SERVER" -d "$TEST_CREDS"; then
+if ` + tc.command + `; then
     [ "$TEST_CANCEL" = false ]
-    [ "$ADBGROUP_GROUP" = b ]
+    [ "$ADBGROUP_GROUP" = devices ]
     case "$(adg d --json)" in *DEVICE_B*) ;; *) exit 20 ;; esac
 else
     [ "$TEST_CANCEL" = true ]
@@ -288,7 +397,7 @@ printf '\nMENU_OK\n'
 				}
 				select {
 				case <-output.ready:
-					if mode == "interrupt" {
+					if tc.mode == "interrupt" {
 						data, readErr := os.ReadFile(pidFile)
 						if readErr != nil {
 							t.Fatal(readErr)
@@ -311,7 +420,7 @@ printf '\nMENU_OK\n'
 				waitErr := cmd.Wait()
 				stdin.Close()
 				out := output.buffer.String()
-				if err != nil || waitErr != nil || !strings.Contains(out, "MENU_OK") || mode == "cancel" && !strings.Contains(out, "group selection cancelled") {
+				if err != nil || waitErr != nil || !strings.Contains(out, "MENU_OK") || tc.mode == "cancel" && !strings.Contains(out, "group selection cancelled") {
 					t.Fatalf("menu: %v %v\n%s", err, waitErr, out)
 				}
 				entries, err := os.ReadDir(tmp)
@@ -327,12 +436,14 @@ printf '\nMENU_OK\n'
 			t.Fatal(err)
 		}
 		state.Close()
-		cmd := exec.Command(executable, "use", "-s", s.URL, "-d", creds)
-		cmd.Env = append(env, shellStateFile+"="+state.Name())
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), "specify a group") {
-			t.Fatalf("no tty: %v %s", err, out)
+		for _, args := range [][]string{nil, {"use"}} {
+			cmd := exec.Command(executable, args...)
+			cmd.Env = append(env, "ADBGROUP_CONTEXT=", shellStateFile+"="+state.Name())
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "specify a group") {
+				t.Fatalf("no tty for adg %v: %v %s", args, err, out)
+			}
 		}
 	})
 	cmd := exec.Command(executable, "t", "list", "--json")

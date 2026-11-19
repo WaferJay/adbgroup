@@ -21,7 +21,7 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		want []string
 		fail bool
 	}{
-		{"help", []string{"-help"}, []string{"Usage: adg <command>", "GROUP <adb arguments...>", "-g GROUP", "adg team-a devices -l", "tunnel (t)", "groups (g)", "devices (d)", "daemon"}, false},
+		{"help", []string{"-help"}, []string{"Usage: adg <command>", "GROUP [adb arguments...]", "@devices", "adg team-a devices -l", `same as "adg use"`, "adg use team-a", "tunnel (t)", "groups (g)", "devices (d)", "daemon"}, false},
 		{"short help", []string{"-h"}, []string{"Usage: adg <command>"}, false},
 		{"long help", []string{"--help"}, []string{"Usage: adg <command>"}, false},
 		{"check", []string{"check", "-help"}, []string{"Usage: adg check", "-config", "config.yaml"}, false},
@@ -35,6 +35,9 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		{"devices alias", []string{"d", "-help"}, []string{"Usage: adg devices", "-group"}, false},
 		{"use", []string{"use", "--help"}, []string{"Usage: adg use", "shell-init", "-server"}, false},
 		{"use group help", []string{"use", "team-a", "--help"}, []string{"Usage: adg use"}, false},
+		{"devices group help", []string{"devices", "@daemon", "--help"}, []string{"Usage: adg devices"}, false},
+		{"devices help before group", []string{"devices", "--help", "@daemon"}, []string{"Usage: adg devices"}, false},
+		{"tunnel group help", []string{"t", "@stop", "--help"}, []string{"-no-daemon", "-listen"}, false},
 		{"unuse", []string{"unuse", "--help"}, []string{"Usage: adg unuse"}, false},
 		{"shell init", []string{"shell-init", "--help"}, []string{"Usage: adg shell-init"}, false},
 		{"unsupported shell", []string{"shell-init", "fish"}, []string{"zsh|bash"}, true},
@@ -48,14 +51,22 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		{"daemon start", []string{"daemon", "start", "-help"}, []string{"Usage: adg daemon start"}, false},
 		{"daemon status", []string{"daemon", "status", "-help"}, []string{"Usage: adg daemon status"}, false},
 		{"daemon stop", []string{"daemon", "stop", "-help"}, []string{"Usage: adg daemon stop"}, false},
-		{"no command", nil, []string{"Usage: adg <command>", "a command is required"}, true},
-		{"unknown command", []string{"unknown"}, []string{"Usage: adg <command>", `unknown command`}, true},
+		{"bare menu without integration", nil, []string{"initialize shell integration", "adg --help"}, true},
+		{"use menu without integration", []string{"use"}, []string{"initialize shell integration", "adg --help"}, true},
+		{"bare group without integration", []string{"team-a"}, []string{"initialize shell integration", "devices -l"}, true},
+		{"explicit group without integration", []string{"@devices"}, []string{"initialize shell integration", "devices -l"}, true},
+		{"legacy group flag without integration", []string{"-g", "devices"}, []string{"initialize shell integration", "devices -l"}, true},
+		{"group switch before loading config", []string{"-f", "missing.yaml", "team-a"}, []string{"initialize shell integration", "devices -l"}, true},
 		{"missing group flag value", []string{"-g"}, []string{"flag needs an argument"}, true},
 		{"empty explicit group", []string{"--group=", "devices"}, []string{"group name cannot be empty"}, true},
-		{"reserved group after config", []string{"-f", "lab.yaml", "t", "shell"}, []string{"use -g t"}, true},
+		{"empty at selector", []string{"@", "devices"}, []string{"group name cannot be empty"}, true},
+		{"empty inventory selector", []string{"devices", "@"}, []string{"group name cannot be empty"}, true},
+		{"reserved group after config", []string{"-f", "lab.yaml", "t", "shell"}, []string{"@t"}, true},
+		{"reserved tunnel group after options", []string{"t", "-f", "lab.yaml", "list"}, []string{"@list"}, true},
 		{"adb server override", []string{"-s", "https://gateway.example", "-g", "d", "-s", "1234", "-P5037", "devices"}, []string{"adb option -P conflicts"}, true},
 		{"unknown flag", []string{"check", "-unknown"}, []string{"Usage: adg check", "flag provided but not defined"}, true},
-		{"extra argument", []string{"devices", "extra"}, []string{"Usage: adg devices", "unexpected positional arguments"}, true},
+		{"two inventory groups", []string{"devices", "first", "@second"}, []string{"group specified more than once"}, true},
+		{"conflicting group selectors", []string{"devices", "@first", "-g", "second"}, []string{"group specified more than once"}, true},
 		{"missing tunnel ID", []string{"t", "stop"}, []string{"Usage: adg tunnel stop <id>"}, true},
 		{"extra list argument", []string{"t", "list", "extra"}, []string{"Usage: adg tunnel list"}, true},
 		{"missing daemon command", []string{"daemon"}, []string{"Usage: adg daemon", "a daemon command is required"}, true},
@@ -66,7 +77,7 @@ func TestCLIHelpAndUsage(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			cmd := exec.CommandContext(ctx, executable, tc.args...)
-			cmd.Env = append(os.Environ(), "ADBGROUP_TEST_CLI=1", "HOME="+home)
+			cmd.Env = append(os.Environ(), "ADBGROUP_TEST_CLI=1", "HOME="+home, shellStateFile+"=")
 			cmd.Dir = work
 			output, err := cmd.CombinedOutput()
 			if (err != nil) != tc.fail {

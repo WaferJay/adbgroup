@@ -8,19 +8,32 @@ import (
 
 func printUsage(out io.Writer) {
 	fmt.Fprint(out, `Usage: adg <command> [options]
-       adg [connection options] GROUP <adb arguments...>
-       adg [connection options] -g GROUP [adb arguments...]
+       adg
+       adg [connection options] GROUP [adb arguments...]
+       adg [connection options] @GROUP [adb arguments...]
 
-Run native adb for a group:
+Find a group and run native adb:
+  adg groups
   adg team-a devices -l
   adg team-a -s USB_SERIAL_A shell
-  adg -f staging.yaml -g devices devices -l
+  adg -f staging.yaml @devices devices -l
+
+Select a group for this terminal (requires bash or zsh shell integration):
+  adg                  Choose a group from a menu (same as "adg use")
+  adg team-a           Same as "adg use team-a"
+  adg @devices         Select the group named "devices"
+  adg unuse            Restore the terminal's previous ADB socket
+
+With shell integration, the first device query or tunnel creation without
+an explicit group selects the configured group if this terminal has none.
 
 Put connection options (-f/-config, -s/-server, -d/-credentials, -cert,
--key, -ca) before the group. Use -g GROUP for a group named like an adg
-command or alias. After the group, arguments go to adb. The group supplies
-the ADB server endpoint, so adb server options -H, -P, and -L conflict.
-This mode requires adb on PATH and works without shell initialization.
+-key, -ca) before the group. Use @GROUP for a group named like an adg
+command or alias. Use @@name for a group named @name.
+Arguments after the group run adb once, independently of
+the terminal selection. This requires adb on PATH and works without shell
+initialization. The group supplies the ADB server endpoint, so adb server
+options -H, -P, and -L conflict.
 
 Commands:
   check          Validate the server configuration
@@ -48,9 +61,10 @@ var commandHelp = map[string]struct {
 	"check":   {"check [options]", "Validate the server configuration without starting the gateway."},
 	"serve":   {"serve [options]", "Start the HTTPS API and ADB gateway server."},
 	"cert":    {"cert [options] -user <name> -out <directory>", "Issue client credentials. Use -identity instead of -user for an explicit identity URI."},
-	"groups":  {"groups [options]", "List authorized groups. Alias: g."},
-	"devices": {"devices [options]", "List devices and lock status in the selected group. Alias: d."},
-	"use": {"use [GROUP] [options]", `Select a group in the current terminal; choose from a numbered menu without GROUP.
+	"groups":  {"groups [options]", "List authorized groups. A leading * marks the current group. Alias: g."},
+	"devices": {"devices [GROUP] [options]", "List devices and lock status in a group. Alias: d.\nExample: adg devices @team-a --json. Without GROUP, an unselected terminal with shell integration adopts the configured group."},
+	"use": {"use [GROUP] [options]", `Select a group in the current terminal. Both "adg" and "adg use" open the numbered menu.
+You can also switch with "adg GROUP" or "adg @GROUP" for a reserved name.
 Export ADBGROUP_GROUP with the selected group name.
 Reuse a normal tunnel or create one on an OS-assigned loopback port.
 Managed normal tunnels keep their port and reconnect after server/network outages.
@@ -59,8 +73,10 @@ Client connection options override the current selection. No write lease is sele
 	"unuse": {"unuse", "Restore ADB_SERVER_SOCKET from before the first use and unset ADBGROUP_GROUP, keeping background tunnels running."},
 	"shell-init": {"shell-init <zsh|bash>", `Print shell integration. Add eval "$(command adg shell-init zsh)" to ~/.zshrc,
 or use bash and add it to the startup file loaded by your bash terminal.
-Only use/unuse modify the current terminal; tunnel (t) keeps its original behavior.`},
-	"tunnel": {"tunnel [options]\n       adg tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
+Use "adg" for the group menu, "adg GROUP" to switch this terminal, and "adg unuse" to restore it.
+"adg devices" and tunnel creation can also select the configured group on first use.`},
+	"tunnel": {"tunnel [GROUP] [options]\n       adg tunnel <list|stop> [options]", `Start a local ADB tunnel managed by the background daemon. Alias: t.
+Use @list or @stop to select a group named like a tunnel subcommand.
 Use -no-daemon to run in the foreground.
 After connecting, managed normal tunnels reconnect automatically on the same port.
 While reconnecting, new ADB requests fail; streams and forward/reverse rules end.

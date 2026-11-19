@@ -38,13 +38,13 @@ func TestInventoryQueriesPrintTablesAndJSON(t *testing.T) {
 	for _, command := range []string{"groups", "devices"} {
 		t.Run(command, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := runQuery(context.Background(), client, command, "team-a", false, &out); err != nil {
+			if err := runQuery(context.Background(), client, command, "team-a", "", false, &out); err != nil {
 				t.Fatal(err)
 			}
 			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 			var wantRows [][]string
 			if command == "groups" {
-				wantRows = [][]string{{"NAME", "DEVICES", "DEFAULT", "CURRENT"}, {"team-a", "2", "*"}, {"team-b", "0"}}
+				wantRows = [][]string{{"NAME", "DEVICES"}, {"team-a", "2"}, {"team-b", "0"}}
 			} else {
 				wantRows = [][]string{{"SERIAL", "STATE", "READERS", "QUEUED", "WRITER", "DUPLICATE"}, {"A", "device", "2", "1", "lease-id", "false"}, {"B", "disconnected", "0", "0", "-", "false"}}
 				if client.selected != "team-a" {
@@ -60,12 +60,14 @@ func TestInventoryQueriesPrintTablesAndJSON(t *testing.T) {
 				}
 			}
 			out.Reset()
-			if err := runQuery(context.Background(), client, command, "team-a", true, &out); err != nil {
+			if err := runQuery(context.Background(), client, command, "team-a", "team-b", true, &out); err != nil {
 				t.Fatal(err)
 			}
 			if command == "groups" {
 				var got []gateway.Group
-				if err := json.Unmarshal(out.Bytes(), &got); err != nil || !reflect.DeepEqual(got, client.groups) {
+				decoder := json.NewDecoder(bytes.NewReader(out.Bytes()))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&got); err != nil || !reflect.DeepEqual(got, client.groups) {
 					t.Fatalf("invalid groups JSON: %s (%v)", out.String(), err)
 				}
 			} else {
@@ -84,7 +86,7 @@ func TestInventoryQueryErrorsLeaveStdoutEmpty(t *testing.T) {
 	for _, command := range []string{"groups", "devices"} {
 		for _, jsonOutput := range []bool{false, true} {
 			var out bytes.Buffer
-			if err := runQuery(context.Background(), client, command, "team-b", jsonOutput, &out); !errors.Is(err, want) {
+			if err := runQuery(context.Background(), client, command, "team-b", "", jsonOutput, &out); !errors.Is(err, want) {
 				t.Errorf("query error = %v, want %v", err, want)
 			}
 			if out.Len() != 0 {

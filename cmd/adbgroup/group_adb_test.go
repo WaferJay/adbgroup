@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"flag"
 	"net"
 	"net/http/httptest"
 	"os"
@@ -24,6 +25,26 @@ import (
 	"github.com/WaferJay/adbgroup/internal/pki"
 	"github.com/WaferJay/adbgroup/internal/tunnel"
 )
+
+func TestGroupSelectorBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		group string
+		adb   []string
+	}{
+		{[]string{"-f", "@profile", "@t", "shell", "echo", "@file"}, "t", []string{"shell", "echo", "@file"}},
+		{[]string{"@@serial", "devices", "-l"}, "@serial", []string{"devices", "-l"}},
+		{[]string{"-g", "@serial", "devices"}, "@serial", []string{"devices"}},
+	} {
+		flags := flag.NewFlagSet("adg", flag.ContinueOnError)
+		o := bindClientFlags(flags)
+		flags.String("f", "", "config")
+		group, args, err := parseGroupArgs(flags, o, tc.args)
+		if err != nil || group != tc.group || !reflect.DeepEqual(args, tc.adb) {
+			t.Errorf("parse %q: group=%q adb=%q err=%v", tc.args, group, args, err)
+		}
+	}
+}
 
 func TestGroupADBCLI(t *testing.T) {
 	// A short HOME keeps the daemon's Unix socket path within macOS limits.
@@ -119,11 +140,11 @@ esac
 		t.Fatalf("missing adb created daemon state: %v", err)
 	}
 
-	// Start two calls for one group and a third for a different group before
-	// waiting for any of them. The fake adb records exact argument boundaries.
-	groups := []string{"a", "a", "devices"}
-	prefixes := [][]string{{"a"}, {"-f", configPath, "a"}, {"-g", "devices"}}
-	nativeArgs := []string{"-s", "serial", "shell", "echo", "", "two words", "$(false)", "-P"}
+	// Run different selector spellings concurrently. The fake adb records exact
+	// argument boundaries, including @ in the device command.
+	groups := []string{"a", "a", "devices", "devices"}
+	prefixes := [][]string{{"a"}, {"-f", configPath, "@a"}, {"@devices"}, {"-g", "devices"}}
+	nativeArgs := []string{"-s", "serial", "shell", "echo", "", "two words", "$(false)", "-P", "@file"}
 	var calls []*exec.Cmd
 	outputs := make([]bytes.Buffer, len(groups))
 	for i, prefix := range prefixes {

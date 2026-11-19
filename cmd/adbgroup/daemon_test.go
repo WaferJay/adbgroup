@@ -25,7 +25,7 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("ADBGROUP_TEST_CLI") == "1" {
-		if path := os.Getenv("ADBGROUP_TEST_PID_FILE"); path != "" && len(os.Args) > 1 && os.Args[1] == "use" {
+		if path := os.Getenv("ADBGROUP_TEST_PID_FILE"); path != "" && (len(os.Args) == 1 || os.Args[1] == "use") {
 			if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 				panic(err)
 			}
@@ -60,7 +60,7 @@ func TestManagedTunnelCLIWithMTLS(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(pem)
-	cfg := gateway.Config{Groups: []gateway.Group{{Name: "a", Devices: []string{"A"}}, {Name: "b", Devices: []string{"B"}}}, Identities: map[string][]string{"spiffe://adbgroup/alice": {"a", "b"}}}
+	cfg := gateway.Config{Groups: []gateway.Group{{Name: "list", Devices: []string{"A"}}, {Name: "stop", Devices: []string{"B"}}}, Identities: map[string][]string{"spiffe://adbgroup/alice": {"list", "stop"}}}
 	cfg.Defaults()
 	e := gateway.NewEngine(cfg)
 	g := gateway.NewGateway(e, gateway.Backend{})
@@ -96,11 +96,11 @@ func TestManagedTunnelCLIWithMTLS(t *testing.T) {
 	}
 	firstPort, secondPort := port(), port()
 	create := func(group, address string) string {
-		out, err := invoke("t", "-s", s.URL, "-d", filepath.Dir(user.Certificate), "-g", group, "-l", address)
+		out, err := invoke("t", "@"+group, "-s", s.URL, "-d", filepath.Dir(user.Certificate), "-l", address)
 		if err != nil {
 			t.Fatalf("create: %s, %v", out, err)
 		}
-		if !strings.Contains(out, "ADB_SERVER_SOCKET=tcp:"+address) {
+		if !strings.Contains(out, "group="+group+" listen="+address) || !strings.Contains(out, "ADB_SERVER_SOCKET=tcp:"+address) {
 			t.Fatal(out)
 		}
 		conn, err := net.DialTimeout("tcp", address, time.Second)
@@ -110,9 +110,9 @@ func TestManagedTunnelCLIWithMTLS(t *testing.T) {
 		conn.Close()
 		return out
 	}
-	first := create("a", firstPort)
-	create("b", secondPort)
-	if reused := create("a", firstPort); reused != first {
+	first := create("list", firstPort)
+	create("stop", secondPort)
+	if reused := create("list", firstPort); reused != first {
 		t.Fatalf("duplicate create changed tunnel: %s / %s", first, reused)
 	}
 	list := func() []daemon.Tunnel {
@@ -146,7 +146,7 @@ func TestManagedTunnelCLIWithMTLS(t *testing.T) {
 	if entries := list(); len(entries) != 1 || entries[0].Listen != secondPort || entries[0].State != "active" {
 		t.Fatalf("independent stop: %+v", entries)
 	}
-	if out, err := invoke("t", "-s", s.URL, "-d", filepath.Dir(user.Certificate), "-g", "a", "-l", secondPort); err == nil {
+	if out, err := invoke("t", "-s", s.URL, "-d", filepath.Dir(user.Certificate), "-g", "list", "-l", secondPort); err == nil {
 		t.Fatalf("conflict accepted: %s", out)
 	}
 	if out, err := invoke("daemon", "stop"); err != nil {
@@ -164,7 +164,7 @@ func TestManagedTunnelCLIWithMTLS(t *testing.T) {
 	}
 	foregroundCtx, foregroundCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer foregroundCancel()
-	foreground := exec.CommandContext(foregroundCtx, executable, "t", "--no-daemon", "-s", s.URL, "-d", filepath.Dir(user.Certificate), "-g", "a", "-l", firstPort)
+	foreground := exec.CommandContext(foregroundCtx, executable, "t", "--no-daemon", "-s", s.URL, "-d", filepath.Dir(user.Certificate), "@list", "-l", firstPort)
 	foreground.Env = append(os.Environ(), "ADBGROUP_TEST_CLI=1", "HOME="+home)
 	var foregroundOutput bytes.Buffer
 	foreground.Stdout, foreground.Stderr = &foregroundOutput, &foregroundOutput

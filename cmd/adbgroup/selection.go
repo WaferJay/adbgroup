@@ -56,7 +56,7 @@ func applySelection(o *tunnelOptions, flags *flag.FlagSet) *selection {
 
 func requireShell() error {
 	if os.Getenv(shellStateFile) == "" {
-		return errors.New("initialize shell integration first: eval \"$(command adg shell-init zsh)\" (use bash instead of zsh for bash)")
+		return errors.New("initialize shell integration with 'source <(command adg shell-init zsh)' (use bash instead of zsh for bash), or run 'adg --help' for usage")
 	}
 	return nil
 }
@@ -117,30 +117,17 @@ func runUse(args []string, out io.Writer) error {
 	}
 	file := flags.String("config", path, "client configuration file")
 	flags.StringVar(file, "f", path, "short for -config")
-	// Accept the group before or after options, like `use team-a -s ORIGIN`.
-	group := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		group, args = args[0], args[1:]
-	}
-	if err := flags.Parse(args); err != nil {
+	if err := parseClientGroupArgs(flags, args); err != nil {
 		return err
-	}
-	if flags.NArg() > 1 || group != "" && flags.NArg() != 0 {
-		return errors.New("use accepts at most one group")
-	}
-	if flags.NArg() == 1 {
-		group = flags.Arg(0)
-	}
-	if flagWasSet(flags, "group", "g") {
-		if group != "" {
-			return errors.New("choose a positional group or -g, not both")
-		}
-		group = o.group
 	}
 	if err := requireShell(); err != nil {
 		return err
 	}
-	if _, err := o.loadConfig(*file, flags); err != nil {
+	return o.selectTerminalGroup(o.group, *file, flags, out)
+}
+
+func (o *tunnelOptions) selectTerminalGroup(group, file string, flags *flag.FlagSet, out io.Writer) error {
+	if err := o.loadConfig(file, flags); err != nil {
 		return err
 	}
 	active := applySelection(o, flags)
@@ -166,6 +153,10 @@ func runUse(args []string, out io.Writer) error {
 			return err
 		}
 	}
+	return o.activateTerminalGroup(group, out)
+}
+
+func (o *tunnelOptions) activateTerminalGroup(group string, out io.Writer) error {
 	s, err := o.ensureGroupTunnel(group)
 	if err != nil {
 		return err
