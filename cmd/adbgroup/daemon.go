@@ -32,8 +32,9 @@ func ensureDaemon(ctx context.Context, dir string) error {
 	return daemon.Ensure(startup, dir, executable)
 }
 
-func startManagedTunnel(o *tunnelOptions, cert, key, ca string, out io.Writer) error {
+func (o *tunnelOptions) daemonConfig() (daemon.Config, error) {
 	cfg := daemon.Config{Server: o.server, Group: o.group, Lease: o.lease, Listen: o.listen}
+	cert, key, ca := o.credentialFiles()
 	var err error
 	for _, p := range []struct {
 		target *string
@@ -41,10 +42,16 @@ func startManagedTunnel(o *tunnelOptions, cert, key, ca string, out io.Writer) e
 	}{{&cfg.Cert, cert}, {&cfg.Key, key}, {&cfg.CA, ca}} {
 		*p.target, err = filepath.Abs(p.value)
 		if err != nil {
-			return err
+			return cfg, err
 		}
 	}
-	if err := cfg.Normalize(); err != nil {
+	err = cfg.Normalize()
+	return cfg, err
+}
+
+func startManagedTunnel(o *tunnelOptions, out io.Writer) error {
+	cfg, err := o.daemonConfig()
+	if err != nil {
 		return err
 	}
 	dir, err := daemon.StateDir()

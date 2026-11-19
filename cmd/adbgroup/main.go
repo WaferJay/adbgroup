@@ -160,6 +160,18 @@ func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
 	}
 }
 
+func (o *tunnelOptions) loadConfig(path string, flags *flag.FlagSet) (tunnelFile, error) {
+	c, found, err := loadTunnelFile(path)
+	if err != nil {
+		return c, fmt.Errorf("load client config %s: %w", path, err)
+	}
+	if !found && flagWasSet(flags, "config", "f") {
+		return c, fmt.Errorf("client config %s does not exist", path)
+	}
+	o.applyFile(c, flags)
+	return c, nil
+}
+
 func bindClientFlags(flags *flag.FlagSet) *tunnelOptions {
 	o := &tunnelOptions{server: defaultTunnelServer, listen: "127.0.0.1:15037", credentials: "."}
 	flags.StringVar(&o.server, "server", o.server, "HTTPS server origin")
@@ -227,8 +239,11 @@ func run() error {
 	case "unuse":
 		return runUnuse(os.Args[2:])
 	default:
-		printUsage(os.Stderr)
-		return fmt.Errorf("unknown command %q", os.Args[1])
+		if len(os.Args) == 2 && !strings.HasPrefix(command, "-") {
+			printUsage(os.Stderr)
+			return fmt.Errorf("unknown command %q; to run adb, use adg GROUP <adb arguments>", command)
+		}
+		return runGroupADB(os.Args[1:])
 	}
 	if command == "daemon" {
 		return runDaemonCommand(os.Args[2:], os.Stdout)
@@ -278,15 +293,9 @@ func run() error {
 		return errors.New("unexpected positional arguments")
 	}
 	if clientCommand {
-		configured, found, err := loadTunnelFile(*file)
+		configured, err := tunnelFlags.loadConfig(*file, flags)
 		if err != nil {
-			return fmt.Errorf("load client config %s: %w", *file, err)
-		}
-		if !found && flagWasSet(flags, "config", "f") {
-			return fmt.Errorf("client config %s does not exist", *file)
-		}
-		if found {
-			tunnelFlags.applyFile(configured, flags)
+			return err
 		}
 		markers := groupMarkers{Default: configured.Group}
 		if command != "tunnel" {
@@ -294,10 +303,10 @@ func run() error {
 				markers.Current = active.Config.Group
 			}
 		}
-		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
 		if command == "tunnel" && !noDaemon {
-			return startManagedTunnel(tunnelFlags, clientCert, clientKey, serverCA, os.Stdout)
+			return startManagedTunnel(tunnelFlags, os.Stdout)
 		}
+		clientCert, clientKey, serverCA := tunnelFlags.credentialFiles()
 		client, err := tunnel.NewClient(tunnelFlags.server, clientCert, clientKey, serverCA)
 		if err != nil {
 			return err

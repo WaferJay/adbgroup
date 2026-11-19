@@ -8,6 +8,19 @@ import (
 
 func printUsage(out io.Writer) {
 	fmt.Fprint(out, `Usage: adg <command> [options]
+       adg [connection options] GROUP <adb arguments...>
+       adg [connection options] -g GROUP [adb arguments...]
+
+Run native adb for a group:
+  adg team-a devices -l
+  adg team-a -s USB_SERIAL_A shell
+  adg -f staging.yaml -g devices devices -l
+
+Put connection options (-f/-config, -s/-server, -d/-credentials, -cert,
+-key, -ca) before the group. Use -g GROUP for a group named like an adg
+command or alias. After the group, arguments go to adb. The group supplies
+the ADB server endpoint, so adb server options -H, -P, and -L conflict.
+This mode requires adb on PATH and works without shell initialization.
 
 Commands:
   check          Validate the server configuration

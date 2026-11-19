@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -141,14 +140,9 @@ func runUse(args []string, out io.Writer) error {
 	if err := requireShell(); err != nil {
 		return err
 	}
-	c, found, err := loadTunnelFile(*file)
-	if err != nil {
+	if _, err := o.loadConfig(*file, flags); err != nil {
 		return err
 	}
-	if !found && flagWasSet(flags, "config", "f") {
-		return fmt.Errorf("client config %s does not exist", *file)
-	}
-	o.applyFile(c, flags)
 	active := applySelection(o, flags)
 	cert, key, ca := o.credentialFiles()
 	client, err := tunnel.NewClient(o.server, cert, key, ca)
@@ -172,43 +166,44 @@ func runUse(args []string, out io.Writer) error {
 			return err
 		}
 	}
-	ctx, cancel := commandContext()
-	defer cancel()
-	cfg := daemon.Config{Server: o.server, Group: group, Listen: "127.0.0.1:1"}
-	for _, p := range []struct {
-		target *string
-		value  string
-	}{{&cfg.Cert, cert}, {&cfg.Key, key}, {&cfg.CA, ca}} {
-		*p.target, err = filepath.Abs(p.value)
-		if err != nil {
-			return err
-		}
-	}
-	if err := cfg.Normalize(); err != nil {
+	s, err := o.ensureGroupTunnel(group)
+	if err != nil {
 		return err
+	}
+	if _, err := fmt.Fprintf(out, "Using group %s: %s (tunnel %s)\n", group, s.Config.Listen, s.ID); err != nil {
+		return err
+	}
+	return writeShellState("set", s)
+}
+
+func (o tunnelOptions) ensureGroupTunnel(group string) (*selection, error) {
+	// Ensure chooses the port. Normalize still needs a valid loopback address.
+	o.group, o.listen, o.lease = group, "127.0.0.1:1", ""
+	cfg, err := o.daemonConfig()
+	if err != nil {
+		return nil, err
 	}
 	dir, err := daemon.StateDir()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	ctx, cancel := commandContext()
+	defer cancel()
 	if err := ensureDaemon(ctx, dir); err != nil {
-		return err
+		return nil, err
 	}
 	res, err := daemon.Call(ctx, dir, daemon.Request{Operation: "ensure", Config: &cfg})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if res.Tunnel == nil || res.Tunnel.State != "active" {
-		return errors.New("daemon returned no active tunnel")
+	if res.Tunnel == nil || res.Tunnel.State != "active" || res.Tunnel.Group != group {
+		return nil, errors.New("daemon returned no active tunnel for the requested group")
 	}
 	cfg.Listen = res.Tunnel.Listen
 	if err := cfg.Normalize(); err != nil {
-		return err
+		return nil, err
 	}
-	if _, err := fmt.Fprintf(out, "Using group %s: %s (tunnel %s)\n", group, cfg.Listen, res.Tunnel.ID); err != nil {
-		return err
-	}
-	return writeShellState("set", &selection{Config: cfg, ID: res.Tunnel.ID})
+	return &selection{Config: cfg, ID: res.Tunnel.ID}, nil
 }
 
 func chooseGroup(groups []gateway.Group, current string, out io.Writer) (string, error) {

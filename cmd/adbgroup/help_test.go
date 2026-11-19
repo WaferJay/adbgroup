@@ -21,7 +21,7 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		want []string
 		fail bool
 	}{
-		{"help", []string{"-help"}, []string{"Usage: adg <command>", "tunnel (t)", "groups (g)", "devices (d)", "daemon"}, false},
+		{"help", []string{"-help"}, []string{"Usage: adg <command>", "GROUP <adb arguments...>", "-g GROUP", "adg team-a devices -l", "tunnel (t)", "groups (g)", "devices (d)", "daemon"}, false},
 		{"short help", []string{"-h"}, []string{"Usage: adg <command>"}, false},
 		{"long help", []string{"--help"}, []string{"Usage: adg <command>"}, false},
 		{"check", []string{"check", "-help"}, []string{"Usage: adg check", "-config", "config.yaml"}, false},
@@ -50,6 +50,10 @@ func TestCLIHelpAndUsage(t *testing.T) {
 		{"daemon stop", []string{"daemon", "stop", "-help"}, []string{"Usage: adg daemon stop"}, false},
 		{"no command", nil, []string{"Usage: adg <command>", "a command is required"}, true},
 		{"unknown command", []string{"unknown"}, []string{"Usage: adg <command>", `unknown command`}, true},
+		{"missing group flag value", []string{"-g"}, []string{"flag needs an argument"}, true},
+		{"empty explicit group", []string{"--group=", "devices"}, []string{"group name cannot be empty"}, true},
+		{"reserved group after config", []string{"-f", "lab.yaml", "t", "shell"}, []string{"use -g t"}, true},
+		{"adb server override", []string{"-s", "https://gateway.example", "-g", "d", "-s", "1234", "-P5037", "devices"}, []string{"adb option -P conflicts"}, true},
 		{"unknown flag", []string{"check", "-unknown"}, []string{"Usage: adg check", "flag provided but not defined"}, true},
 		{"extra argument", []string{"devices", "extra"}, []string{"Usage: adg devices", "unexpected positional arguments"}, true},
 		{"missing tunnel ID", []string{"t", "stop"}, []string{"Usage: adg tunnel stop <id>"}, true},

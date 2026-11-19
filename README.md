@@ -191,7 +191,26 @@ group: team-a
 credentials: /path/to/run/clients/alice
 ```
 
-The `credentials` directory uses the fixed filenames produced by the `cert` command: `client.pem`, `client.key`, and `ca.pem`. You can also place these files next to `tunnel.yaml` and omit `credentials`. Once configured, start the tunnel with:
+The `credentials` directory uses the fixed filenames produced by the `cert` command: `client.pem`, `client.key`, and `ca.pem`. You can also place these files next to `tunnel.yaml` and omit `credentials`.
+
+### Run adb for a group
+
+With Android Platform Tools' `adb` on your PATH, put the group name before the adb arguments. Each invocation selects its own group and works from a fresh terminal, a script, or CI without shell initialization or exports.
+
+```sh
+adg team-a devices -l                     # List devices in team-a
+adg team-b -s USB_SERIAL_B shell          # Open a shell on one device in team-b
+adg -f staging.yaml team-a devices        # Use a different client config
+adg -g devices devices -l                 # The group itself is named "devices"
+```
+
+Put client connection options before the group. For example, `-s` before the group selects the gateway server, and `-s` after the group selects an adb serial. Built-in command names and aliases take precedence in the first position. Use `-g GROUP` to select any group explicitly, including one named `devices` or `t`.
+
+The daemon reuses a normal tunnel for the server, credentials, and group, or opens one on an available loopback port. The group applies only to this invocation, even inside a shell with another group selected. The native adb process gets the original argument boundaries, standard input, output, and error streams. Its exit status is the command's exit status. The tunnel supplies the ADB server endpoint, so native adb server options `-H`, `-P`, and `-L` conflict with group selection. For a write lease, use `adg t -w <lease-id>`.
+
+### Start a local tunnel
+
+To start a tunnel for adb or another ADB client such as Appium, run:
 
 ```sh
 adg t

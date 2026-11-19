@@ -96,6 +96,7 @@ func TestInventoryQueryErrorsLeaveStdoutEmpty(t *testing.T) {
 
 func TestInventoryCommandsLoadDefaultClientConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("ADBGROUP_CONTEXT", "") // Exercise the config without the developer's shell selection.
 	path, err := defaultTunnelConfig()
 	if err != nil {
 		t.Fatal(err)

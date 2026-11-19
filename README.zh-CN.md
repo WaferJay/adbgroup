@@ -181,7 +181,26 @@ group: team-a
 credentials: /path/to/run/clients/alice
 ```
 
-`credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。配置完成后启动命令只有：
+`credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。
+
+### 按组运行 adb
+
+安装 Android Platform Tools 并确保能从 PATH 找到 `adb` 后，把组名写在 adb 参数前即可。在新终端、脚本或 CI 中都可以直接调用，无需初始化 shell 或导出环境变量。
+
+```sh
+adg team-a devices -l                     # 列出 team-a 的设备
+adg team-b -s USB_SERIAL_B shell          # 进入 team-b 中指定设备的 shell
+adg -f staging.yaml team-a devices        # 指定客户端配置文件
+adg -g devices devices -l                 # 设备组本身名为 devices
+```
+
+客户端连接参数写在组名前。例如，组名前的 `-s` 指定网关服务端，组名后的 `-s` 指定 adb 设备序列号。首个参数优先匹配内置命令及别名，遇到 `devices`、`t` 等重名分组时用 `-g GROUP` 显式选组。
+
+daemon 按服务端、凭据和组名复用普通隧道，首次创建时自动分配本地回环端口。即使终端已选中其他组，本次调用也使用命令中指定的组。原生 adb 接收原始参数、标准输入、标准输出和标准错误，退出码直接传回调用方。隧道已指定 ADB 服务端地址，与原生 adb 的服务端选项 `-H`、`-P`、`-L` 冲突。如需写租约，请使用 `adg t -w <lease-id>`。
+
+### 启动本地隧道
+
+要为 adb 或 Appium 等 ADB 客户端启动隧道，可运行以下命令。
 
 ```sh
 adg t
