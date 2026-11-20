@@ -26,6 +26,8 @@ archives:
       - LICENSE
       - README.md
       - README.zh-CN.md
+      - docs/*.md
+      - docker/README.md
       - config.example.yaml
       - tunnel.example.yaml
       - deploy/adbgroup.service
