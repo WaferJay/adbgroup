@@ -1,9 +1,19 @@
 ---
 name: adg
-description: Use adg to import client credentials, list authorized device groups, check device and lock status, and run adb commands on Android devices through the ADB Group Gateway.
+description: Install the adg CLI, import client credentials, list authorized device groups, check device and lock status, and run adb commands on Android devices through the ADB Group Gateway.
 ---
 
 # adg
+
+## Install the CLI
+
+For device tasks, use an installed `adg` whose `--help` lists `profile` and `GROUP [adb arguments...]`. If the CLI is missing or lacks these commands, offer to install it. When the user asks to install or upgrade, run the repository's installer. It selects the newest published GitHub release, including prereleases.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/WaferJay/adbgroup/main/install.sh | sh
+```
+
+For a requested release, pass its tag to the script (for example, `sh -s -- --tag v0.1.0-beta.4` after the pipe). Verify the reported binary with `--help`. If `command -v adg` selects another copy, use the reported path for the current task.
 
 ## Import a credential pack
 

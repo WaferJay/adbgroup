@@ -8,9 +8,19 @@ Group Linux USB devices with unified mTLS authentication, native ADB access, and
 Native adb / Appium → local adbgroup tunnel → mTLS HTTPS → groups and locks → persistent ADB server → USB
 ```
 
-## Install the adg skill
+## Install adg
 
-Install `adg` v0.1.0-beta.4 or later on your PATH. For native `adb` commands, also add Android SDK Platform Tools to your PATH. [Download adg](https://github.com/WaferJay/adbgroup/releases)
+On macOS or Linux, run the installer in your terminal.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/WaferJay/adbgroup/main/install.sh | sh
+```
+
+The installer selects the newest published release (including prereleases), verifies the archive's SHA-256 checksum, and installs `adg` in `~/.local/bin`. Run the same command again to upgrade. To pin a version and choose a directory, replace `sh` with `sh -s -- --tag v0.1.0-beta.4 --bin-dir "$HOME/bin"`. For a manual install, download a [release archive](https://github.com/WaferJay/adbgroup/releases).
+
+For native `adb` commands, also add Android SDK Platform Tools to your PATH.
+
+## Install the adg skill
 
 **Codex CLI** — run in your terminal.
 
@@ -26,7 +36,7 @@ codex plugin add adg@adbgroup
 /plugin install adg@adbgroup
 ```
 
-For your first connection, import the credential pack from your administrator with `adg profile import client.adgpack`. Start a new agent session and ask, “Use adg to list the device groups I can access.”
+Start a new agent session. You can ask “Install adg for me” to run the same installer. For your first connection, import your administrator's credential pack with `adg profile import client.adgpack`, then ask “Use adg to list the device groups I can access.”
 
 ## Build and start the server
 
