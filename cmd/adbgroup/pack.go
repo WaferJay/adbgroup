@@ -32,6 +32,10 @@ type packManifest struct {
 
 type credentials struct{ cert, key, ca []byte }
 
+func (c credentials) packEntries() map[string][]byte {
+	return map[string][]byte{"client.pem": c.cert, "client.key": c.key, "ca.pem": c.ca}
+}
+
 func certificates(data []byte) ([]*x509.Certificate, error) {
 	var certs []*x509.Certificate
 	for len(bytes.TrimSpace(data)) > 0 {
@@ -195,11 +199,8 @@ func writeClientPack(cfg gateway.Config, dir, dest, server, serverCA string) err
 	if err != nil {
 		return err
 	}
-	m, err := json.Marshal(packManifest{Version: 1, Name: filepath.Base(absoluteDir), Servers: servers})
-	if err != nil {
-		return err
-	}
-	entries := map[string][]byte{"manifest.json": m, "client.pem": c.cert, "client.key": c.key, "ca.pem": c.ca}
+	manifest := packManifest{Version: 1, Name: filepath.Base(absoluteDir), Servers: servers}
+	entries := c.packEntries()
 	if serverCA != "" {
 		if _, err := certificates(c.ca); err != nil {
 			return err
@@ -213,6 +214,16 @@ func writeClientPack(cfg gateway.Config, dir, dest, server, serverCA string) err
 	if _, err = c.validate(); err != nil {
 		return err
 	}
+	// Explicit exports must fail if the destination already exists.
+	return writePackArchive(dest, manifest, entries, os.Link)
+}
+
+func writePackArchive(dest string, manifest packManifest, entries map[string][]byte, publish func(string, string) error) error {
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	entries["manifest.json"] = data
 	tmp, err := os.CreateTemp(filepath.Dir(dest), ".adgpack-*")
 	if err != nil {
 		return err
@@ -235,8 +246,7 @@ func writeClientPack(cfg gateway.Config, dir, dest, server, serverCA string) err
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	// Publish only a complete archive, and never replace an existing path.
-	return os.Link(tmp.Name(), dest)
+	return publish(tmp.Name(), dest)
 }
 
 func readClientPack(path string) (packManifest, credentials, error) {

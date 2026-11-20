@@ -161,7 +161,9 @@ Repeated startups, network changes, or additional SANs do not overwrite certific
 
 With managed PKI, each `adg serve` startup provisions client PEM files and a `client.adgpack` for new identities in `identities`. For `spiffe://adbgroup/alice`, the default pack path is `run/pki/clients/alice/client.adgpack`. Transfer it privately to Alice, who can run `adg profile import client.adgpack`. Other identity URIs have separate export directories. The issuance log records each pack path.
 
-Restarts reuse existing exports and rebuild a missing pack from its original PEM files. SIGHUP reloads authorization. Added identities receive their packs on the next startup. With external PKI, administrators issue client credentials with their signing CA.
+On startup, the server rebuilds missing packs and atomically replaces packs whose advertised HTTPS addresses have changed, using the original PEM files. After changing the `api.listen` port, restart the server and distribute the refreshed pack. Clients with a profile for the old address can import the pack under a new name with `adg profile import -name alice-new client.adgpack`.
+
+SIGHUP reloads authorization. Added identities receive their packs on the next startup. With external PKI, administrators issue client credentials with their signing CA.
 
 Administrators can also issue user credentials explicitly:
 

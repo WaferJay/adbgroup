@@ -412,9 +412,6 @@ func run() error {
 	if err := ensureTLS(cfg); err != nil {
 		return err
 	}
-	if err := ensureStartupPacks(cfg); err != nil {
-		return err
-	}
 	cert, err := tls.LoadX509KeyPair(cfg.API.Certificate, cfg.API.Key)
 	if err != nil {
 		return err
@@ -443,6 +440,9 @@ func run() error {
 		return err
 	}
 	defer apiListener.Close()
+	if err := ensureStartupPacks(cfg, apiListener.Addr().String()); err != nil {
+		return err
+	}
 	server := &http.Server{Handler: (gateway.API{Engine: engine, Tunnels: ts.Handler()}).Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots}}
 	errs := make(chan error, 3)
 	go func() { errs <- server.ServeTLS(apiListener, "", "") }()
@@ -460,7 +460,7 @@ func run() error {
 	reload := make(chan os.Signal, 1)
 	signal.Notify(reload, syscall.SIGHUP)
 	defer signal.Stop(reload)
-	slog.Info("adg ready", "api", cfg.API.Listen, "groups", len(engine.Config().Groups))
+	slog.Info("adg ready", "api", apiListener.Addr().String(), "groups", len(engine.Config().Groups))
 	for {
 		select {
 		case <-ctx.Done():

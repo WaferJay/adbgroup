@@ -26,7 +26,7 @@ func identityExportName(identity string) string {
 	return fmt.Sprintf("uri=%x", sha256.Sum256([]byte(identity)))
 }
 
-func ensureStartupPacks(cfg gateway.Config) error {
+func ensureStartupPacks(cfg gateway.Config, listen string) error {
 	if !cfg.PKI.AutoTLS || len(cfg.Identities) == 0 {
 		return nil
 	}
@@ -37,20 +37,26 @@ func ensureStartupPacks(cfg gateway.Config) error {
 	}
 	defer unlock()
 	ca := pki.ManagedFiles(cfg.PKI.Directory)
+	// Use the bound port, including the port assigned for api.listen ending in :0.
+	cfg.API.Listen = listen
+	servers, err := packServers(cfg, "")
+	if err != nil {
+		return err
+	}
 	currentCA, err := readLimitedFile(ca.CA, maxPackEntry)
 	if err != nil {
 		return err
 	}
 	for _, identity := range slices.Sorted(maps.Keys(cfg.Identities)) {
 		dir := filepath.Join(root, identityExportName(identity))
-		if err := ensureIdentityPack(cfg, ca, currentCA, identity, dir); err != nil {
+		if err := ensureIdentityPack(cfg, ca, currentCA, identity, dir, servers); err != nil {
 			return fmt.Errorf("provision client pack for %q in %s: %w", identity, dir, err)
 		}
 	}
 	return nil
 }
 
-func ensureIdentityPack(cfg gateway.Config, ca pki.Files, currentCA []byte, identity, dir string) error {
+func ensureIdentityPack(cfg gateway.Config, ca pki.Files, currentCA []byte, identity, dir string, servers []string) error {
 	path := filepath.Join(dir, "client.adgpack")
 	info, err := os.Lstat(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -103,12 +109,19 @@ func ensureIdentityPack(cfg gateway.Config, ca pki.Files, currentCA []byte, iden
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return errors.New("expected a private regular client.adgpack")
 	}
-	_, packed, err := readClientPack(path)
+	manifest, packed, err := readClientPack(path)
 	if err != nil {
 		return err
 	}
 	if !bytes.Equal(packed.cert, c.cert) || !bytes.Equal(packed.key, c.key) || !bytes.Equal(packed.ca, c.ca) {
 		return errors.New("existing pack differs from the exported PEM files")
+	}
+	if !slices.Equal(manifest.Servers, servers) {
+		manifest.Servers = servers
+		if err := writePackArchive(path, manifest, c.packEntries(), os.Rename); err != nil {
+			return err
+		}
+		slog.Info("updated client pack server addresses", "identity", identity, "path", path)
 	}
 	return nil
 }

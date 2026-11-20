@@ -109,7 +109,9 @@ pki:
 
 使用托管 PKI 时，`adg serve` 每次启动都会为 `identities` 中新增的身份生成用户证书、私钥和 `client.adgpack`。例如，`spiffe://adbgroup/alice` 的包默认位于 `run/pki/clients/alice/client.adgpack`。通过私密渠道将包交给 Alice，客户端运行 `adg profile import client.adgpack` 即可。其他身份 URI 使用独立的目录名，首次签发日志会显示完整路径。
 
-重复启动复用已有文件。仅缺少包时，服务会使用原 PEM 文件重新打包。SIGHUP 只更新授权，新增身份会在下次启动时自动出包。外部 PKI 由管理员使用签发 CA 手动签发。
+启动时，服务会用原有 PEM 文件补建缺失的包。如果包中的 HTTPS 候选地址有变化，服务会重新打包并原子替换旧包。修改 `api.listen` 端口后，重启服务并分发更新后的包。已导入旧地址的客户端可以用新名称导入，例如 `adg profile import -name alice-new client.adgpack`。
+
+SIGHUP 只更新授权，新增身份会在下次启动时自动出包。外部 PKI 由管理员使用签发 CA 手动签发。
 
 管理员也可以单独签发用户凭据：
 
