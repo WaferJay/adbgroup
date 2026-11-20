@@ -1,35 +1,35 @@
 ---
 name: adg
-description: 通过 adg 访问 ADB 分组网关。用于导入客户端凭据、列出授权设备组、查询组内设备和锁状态，以及在指定组的 Android 设备上运行 adb 命令。
+description: Use adg to import client credentials, list authorized device groups, check device and lock status, and run adb commands on Android devices through the ADB Group Gateway.
 ---
 
 # adg
 
-## 导入 .adgpack 凭据包
+## Import a credential pack
 
-使用 `adg` v0.1.0-beta.4 或更高版本。管理员提供的 `.adgpack` 包含客户端证书和私钥。在运行 `adg` 的机器上，直接用本地文件路径导入。
+Use `adg` v0.1.0-beta.4 or later. The `.adgpack` file from your administrator contains your client certificate and private key. Import it from a local path on the machine where you run `adg`.
 
 ```sh
 adg profile import -name lab ~/Downloads/client.adgpack
-adg profile list     # 核对配置名、网关、身份和证书到期时间
-adg groups -p lab    # 用刚导入的凭据查询授权组，验证连接
+adg profile list     # Check the profile name, gateway, identity, and certificate expiry
+adg groups -p lab    # Verify the connection by listing groups this profile can access
 ```
 
-`lab` 是本地配置名，省略 `-name lab` 时沿用包内名称。全新安装的首个配置自动成为默认。包中有多个网关地址时，可在终端按编号选择，或在文件路径前加 `-server URL` 指定 HTTPS 地址。
+`lab` is the local profile name. Omit `-name lab` to use the name stored in the pack. On a fresh install, the first profile becomes the default. If the pack lists multiple gateways, select one by number at the prompt or pass `-server URL` before the file path to specify the HTTPS address.
 
-## 查询设备
+## List groups and devices
 
-- `adg groups` 列出当前身份可访问的组。
-- `adg devices team-a` 查询该组的设备序列号、连接状态和读写锁。需要结构化结果时追加 `--json`。
+- `adg groups` lists the groups your current identity can access.
+- `adg devices team-a` shows each device's serial number, connection state, and read/write lock status in `team-a`. Append `--json` for structured output.
 
-## 执行 adb 命令
+## Run adb commands
 
-单次操作直接指定组和设备。将示例中的 `team-a` 和 `USB_SERIAL_A` 换成目标组和设备序列号。原生 `adb` 需在 `PATH` 中。
+For a one-off command, make sure `adb` is on your `PATH`. Replace `team-a` and `USB_SERIAL_A` with the target group and device serial number.
 
 ```sh
 adg team-a -s USB_SERIAL_A shell getprop ro.product.model
 ```
 
-`-p PROFILE` 等网关连接参数放在组名前，`-s SERIAL` 等 adb 参数放在组名后。组名与命令或别名重名时加 `@`，例如 `adg @devices devices -l`。
+Place gateway options such as `-p PROFILE` before the group name and adb options such as `-s SERIAL` after it. If the group name matches an adg command or alias, prefix it with `@`, as in `adg @devices devices -l`.
 
-要在同一终端连续使用原生 `adb`，先运行 `eval "$(command adg shell-init zsh)"`（bash 用户把 `zsh` 换成 `bash`），再用 `adg use team-a` 选组。用完后运行 `adg unuse` 恢复原连接。
+To run several native `adb` commands in the same terminal, initialize shell integration with `eval "$(command adg shell-init zsh)"` (use `bash` in place of `zsh` for Bash). Select the group with `adg use team-a`. When finished, run `adg unuse` to restore the previous ADB socket.
