@@ -184,7 +184,13 @@ Docker 配置中的裸 `backend.address: 5038` 会让 ADB server 监听容器所
 
 ## 签发客户端证书
 
-服务启动并生成 PKI 后，可以在运行中的容器里签发客户端证书。输出目录必须是
+使用示例配置启动服务后，Alice 的包在宿主机 `data/pki/clients/alice/client.adgpack`，可直接复制出来自行分发：
+
+```sh
+docker compose cp adbgroup:/var/lib/adbgroup/pki/clients/alice/client.adgpack ./alice.adgpack
+```
+
+如需单独签发，也可以在运行中的容器里执行以下命令。输出目录必须是
 `data/` 内尚不存在的目录：
 
 ```sh
@@ -194,15 +200,13 @@ docker compose exec adbgroup adg cert \
   -out /var/lib/adbgroup/clients/alice
 ```
 
-这些文件位于宿主机的 `data/clients/alice/`。私钥权限是 `0600`，且所有者为数字
-UID `10001`；如需交给客户端，可以保持原权限复制出来：
+签发目录包含三个 PEM 文件和 `client.adgpack`。只需复制一个包，再通过私密渠道交给客户端用户：
 
 ```sh
-docker compose cp \
-  adbgroup:/var/lib/adbgroup/clients/alice ./clients/alice
+docker compose cp adbgroup:/var/lib/adbgroup/clients/alice/client.adgpack ./alice.adgpack
 ```
 
-私钥复制完成后应妥善保管，并按需删除 `data/` 中的客户端导出目录。
+在客户端执行 `adg profile import alice.adgpack`，再用 `adg groups` 查看授权分组。包内包含明文客户端私钥，和导出的私钥一样需要妥善保管。若宿主机映射了不同的 HTTPS 端口，签发时加 `-server https://域名:宿主机端口`。
 
 ## 重载与停止
 

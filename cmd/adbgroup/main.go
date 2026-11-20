@@ -69,6 +69,7 @@ const tunnelConfigPath = ".config/adbgroup/tunnel.yaml"
 type tunnelOptions struct {
 	server, group, lease, listen string
 	credentials, cert, key, ca   string
+	profile                      string
 }
 
 type tunnelFile struct {
@@ -160,6 +161,24 @@ func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
 }
 
 func (o *tunnelOptions) loadConfig(path string, flags *flag.FlagSet) error {
+	if flagWasSet(flags, "config", "f") {
+		if flagWasSet(flags, "p", "profile") {
+			return errors.New("-profile and -config cannot be combined")
+		}
+	} else {
+		if flagWasSet(flags, "p", "profile") && o.profile == "" {
+			return errors.New("empty profile name")
+		}
+		name, c, err := lookupProfile(filepath.Join(filepath.Dir(path), "profiles"), o.profile)
+		if err != nil {
+			return err
+		}
+		if name != "" {
+			o.profile = name
+			o.applyFile(c, flags)
+			return nil
+		}
+	}
 	c, found, err := loadTunnelFile(path)
 	if err != nil {
 		return fmt.Errorf("load client config %s: %w", path, err)
@@ -173,6 +192,8 @@ func (o *tunnelOptions) loadConfig(path string, flags *flag.FlagSet) error {
 
 func bindClientFlags(flags *flag.FlagSet) *tunnelOptions {
 	o := &tunnelOptions{server: defaultTunnelServer, listen: "127.0.0.1:15037", credentials: "."}
+	flags.StringVar(&o.profile, "profile", "", "client profile name")
+	flags.StringVar(&o.profile, "p", "", "short for -profile")
 	flags.StringVar(&o.server, "server", o.server, "HTTPS server origin")
 	flags.StringVar(&o.server, "s", o.server, "short for -server")
 	flags.StringVar(&o.group, "group", "", "legacy explicit group selector")
@@ -288,7 +309,13 @@ func run() error {
 	case "-h", "-help", "--help":
 		printUsage(os.Stdout)
 		return flag.ErrHelp
-	case "check", "serve", "cert":
+	case "profile":
+		return runProfile(os.Args[2:], os.Stdout)
+	case "cert":
+		if len(os.Args) > 2 && os.Args[2] == "pack" {
+			return runCertPack(os.Args[3:])
+		}
+	case "check", "serve":
 	case "devices", "groups", "tunnel":
 		return runClientCommand(command, os.Args[2:])
 	case "--shell-client": // Shell functions loaded before upgrading forward queries and tunnels here.
@@ -313,12 +340,14 @@ func run() error {
 	}
 	flags := newCommandFlags(command)
 	file := flags.String("config", "config.yaml", "configuration file")
-	var user, identity, out, caKey, caCert *string
+	var user, identity, out, caKey, caCert, serverOrigin, serverCA *string
 	var days *int
 	if command == "cert" {
+		serverOrigin = flags.String("server", "", "preferred HTTPS origin in the pack")
+		serverCA = flags.String("server-ca", "", "HTTPS server CA trust file for the pack")
 		user = flags.String("user", "", "user name (identity becomes spiffe://adbgroup/USER)")
 		identity = flags.String("identity", "", "explicit identity URI, instead of -user")
-		out = flags.String("out", "", "new directory for client.pem, client.key and ca.pem")
+		out = flags.String("out", "", "new directory for client.pem, client.key, ca.pem and client.adgpack")
 		days = flags.Int("days", 365, "client certificate validity in days")
 		caKey = flags.String("ca-key", "", "external signing CA private key")
 		caCert = flags.String("ca-cert", "", "external signing CA certificate/chain (defaults to api.client_ca)")
@@ -369,17 +398,21 @@ func run() error {
 		if err := pki.VerifyIssuerTrust(*caCert, cfg.API.ClientCA); err != nil {
 			return err
 		}
-		files, err := pki.IssueClient(*caCert, *caKey, *identity, *out, *days)
+		err = issueClientPack(cfg, *caCert, *caKey, *identity, *out, *days, *serverOrigin, *serverCA)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("identity: %s\ncertificate: %s\nprivate key: %s\nCA certificate: %s\n", *identity, files.Certificate, files.Key, files.CA)
+		fmt.Printf("identity: %s\ncertificate: %s\nprivate key: %s\nCA certificate: %s\n", *identity, filepath.Join(*out, "client.pem"), filepath.Join(*out, "client.key"), filepath.Join(*out, "ca.pem"))
+		fmt.Println("credential pack:", filepath.Join(*out, "client.adgpack"))
 		if len(cfg.Identities[*identity]) == 0 {
 			fmt.Printf("Add %q to identities and reload the configuration to grant group access.\n", *identity)
 		}
 		return nil
 	}
 	if err := ensureTLS(cfg); err != nil {
+		return err
+	}
+	if err := ensureStartupPacks(cfg); err != nil {
 		return err
 	}
 	cert, err := tls.LoadX509KeyPair(cfg.API.Certificate, cfg.API.Key)

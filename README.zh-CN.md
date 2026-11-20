@@ -107,7 +107,11 @@ pki:
 
 不会因为重复启动、网络变化或新增 SAN 自动覆盖证书。凭据部分缺失、损坏或过期会报错，需管理员恢复或更新。替换服务端证书或 CA 信任文件后需要冷重启。
 
-管理员签发用户凭据：
+使用托管 PKI 时，`adg serve` 每次启动都会为 `identities` 中新增的身份生成用户证书、私钥和 `client.adgpack`。例如，`spiffe://adbgroup/alice` 的包默认位于 `run/pki/clients/alice/client.adgpack`。通过私密渠道将包交给 Alice，客户端运行 `adg profile import client.adgpack` 即可。其他身份 URI 使用独立的目录名，首次签发日志会显示完整路径。
+
+重复启动复用已有文件。仅缺少包时，服务会使用原 PEM 文件重新打包。SIGHUP 只更新授权，新增身份会在下次启动时自动出包。外部 PKI 由管理员使用签发 CA 手动签发。
+
+管理员也可以单独签发用户凭据：
 
 ```sh
 bin/adg cert -config config.yaml -user alice -out run/clients/alice
@@ -116,7 +120,7 @@ bin/adg cert -config config.yaml \
   -identity spiffe://adbgroup/ci-runner -days 90 -out run/clients/ci-runner
 ```
 
-输出目录包含 `client.pem`、`client.key`、`ca.pem`，不会导出 CA 私钥；已有输出目录会被拒绝。`-out` 相对命令当前目录，PKI 文件路径相对配置文件目录。CLI 可在首次启动前初始化默认 PKI，不启动监听或 ADB。
+输出目录包含 `client.adgpack` 和原有的 `client.pem`、`client.key`、`ca.pem`，不会导出 CA 私钥；已有输出目录会被拒绝。`-out` 相对命令当前目录，PKI 文件路径相对配置文件目录。CLI 可在首次启动前初始化默认 PKI，不启动监听或 ADB。
 
 `-user alice` 对应 `spiffe://adbgroup/alice`。签发不会自动授予权限，把身份加入配置后发送 SIGHUP：
 
@@ -173,7 +177,29 @@ identities 中的完整条目 `"*"` 授权所有现有及未来分组，包括�
 
 ## 普通客户端与透明转发
 
-客户端安装同一二进制，启动本地隧道；这个命令不读取服务端 config.yaml。可参考 `tunnel.example.yaml`，客户端默认读取固定位置 `~/.config/adbgroup/tunnel.yaml`：
+客户端安装同一二进制，通过 SCP 等私密渠道接收 `client.adgpack`。包里含有用户的明文私钥。导入时建议的 profile 名来自签发输出目录名。
+
+```sh
+adg profile import client.adgpack
+adg groups
+adg profile import -name prod prod.adgpack
+adg profile list
+adg profile set-default prod
+adg use -p alice team-a             # 当前终端选组，需要 shell 集成
+adg -p prod team-a devices -l       # 单次使用 prod
+adg profile update alice renewed.adgpack
+```
+
+签发时从 `pki.server_names` 选择实际服务端证书覆盖的名称，并使用 `api.listen` 的端口。未配置名称时使用证书中的具体 DNS 或 IP。只有一个候选时自动采用，有多个时导入命令会列出选项。脚本、没有候选或公网端口映射场景，可以在签发或导入时用 `-server https://host:port` 指定地址。HTTPS 服务使用独立 CA 时，签发或打包时加 `-server-ca gateway-ca.pem`。
+
+```sh
+adg cert pack -config config.yaml -credentials run/clients/alice -bundle alice.adgpack
+adg profile import -f staging.yaml -name staging
+```
+
+新装客户端的首个 profile 自动成为默认，后续导入可以并存。续期后旧隧道和重连沿用原凭据版本。更换网关或身份需另取名称；更新服务端 CA 时会显示新旧 SHA-256 指纹并要求交互确认。本地存储位于 `~/.config/adbgroup/profiles/`，会为已有会话保留历史凭据版本。
+
+已有客户端继续读取 `~/.config/adbgroup/tunnel.yaml`，直到用户显式设置默认 profile。`-f` 可选用原有 YAML 配置，与 `-p` 互斥。旧配置示例：
 
 ```yaml
 server: https://adb-host.example:8443

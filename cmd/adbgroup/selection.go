@@ -23,8 +23,9 @@ import (
 const shellStateFile = "ADBGROUP_SHELL_STATE_FILE"
 
 type selection struct {
-	Config daemon.Config `json:"config"`
-	ID     string        `json:"id"`
+	Profile string        `json:"profile,omitempty"`
+	Config  daemon.Config `json:"config"`
+	ID      string        `json:"id"`
 }
 
 func currentSelection() *selection {
@@ -39,7 +40,7 @@ func currentSelection() *selection {
 }
 
 func connectionFlagsSet(flags *flag.FlagSet) bool {
-	return flagWasSet(flags, "config", "f", "server", "s", "credentials", "d", "cert", "key", "ca")
+	return flagWasSet(flags, "profile", "p", "config", "f", "server", "s", "credentials", "d", "cert", "key", "ca")
 }
 
 func applySelection(o *tunnelOptions, flags *flag.FlagSet) *selection {
@@ -47,6 +48,7 @@ func applySelection(o *tunnelOptions, flags *flag.FlagSet) *selection {
 	if s == nil || connectionFlagsSet(flags) {
 		return nil
 	}
+	o.profile = s.Profile
 	o.server, o.cert, o.key, o.ca = s.Config.Server, s.Config.Cert, s.Config.Key, s.Config.CA
 	if !flagWasSet(flags, "group", "g") {
 		o.group = s.Config.Group
@@ -194,7 +196,7 @@ func (o tunnelOptions) ensureGroupTunnel(group string) (*selection, error) {
 	if err := cfg.Normalize(); err != nil {
 		return nil, err
 	}
-	return &selection{Config: cfg, ID: res.Tunnel.ID}, nil
+	return &selection{Profile: o.profile, Config: cfg, ID: res.Tunnel.ID}, nil
 }
 
 func chooseGroup(groups []gateway.Group, current string, out io.Writer) (string, error) {

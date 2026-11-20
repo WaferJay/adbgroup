@@ -159,7 +159,11 @@ The generated files are `ca.pem`, `ca.key`, `server.pem`, and `server.key`. Dire
 
 Repeated startups, network changes, or additional SANs do not overwrite certificates automatically. Incomplete, damaged, or expired credentials produce an error and require an administrator to restore or renew them. Replacing the server certificate or CA trust file requires a full restart.
 
-Administrators can issue user credentials:
+With managed PKI, each `adg serve` startup provisions client PEM files and a `client.adgpack` for new identities in `identities`. For `spiffe://adbgroup/alice`, the default pack path is `run/pki/clients/alice/client.adgpack`. Transfer it privately to Alice, who can run `adg profile import client.adgpack`. Other identity URIs have separate export directories. The issuance log records each pack path.
+
+Restarts reuse existing exports and rebuild a missing pack from its original PEM files. SIGHUP reloads authorization. Added identities receive their packs on the next startup. With external PKI, administrators issue client credentials with their signing CA.
+
+Administrators can also issue user credentials explicitly:
 
 ```sh
 bin/adg cert -config config.yaml -user alice -out run/clients/alice
@@ -168,7 +172,7 @@ bin/adg cert -config config.yaml \
   -identity spiffe://adbgroup/ci-runner -days 90 -out run/clients/ci-runner
 ```
 
-The output directory contains `client.pem`, `client.key`, and `ca.pem`; the CA private key is never exported. An existing output directory is rejected. `-out` is relative to the command's working directory, while PKI paths are relative to the configuration file's directory. The CLI can initialize the default PKI before the first server startup without starting listeners or ADB.
+The output directory contains `client.adgpack` plus the original `client.pem`, `client.key`, and `ca.pem`; the CA private key is never exported. An existing output directory is rejected. `-out` is relative to the command's working directory, while PKI paths are relative to the configuration file's directory. The CLI can initialize the default PKI before the first server startup without starting listeners or ADB.
 
 `-user alice` maps to `spiffe://adbgroup/alice`. Issuing a certificate does not grant access automatically. Add the identity to the configuration, then send SIGHUP:
 
@@ -183,7 +187,29 @@ For an enterprise PKI, explicitly configure all three API credential files. Use 
 
 ## Standard clients and transparent forwarding
 
-Install the same binary on the client and start a local tunnel. This command does not read the server's `config.yaml`. See `tunnel.example.yaml`; the client reads `~/.config/adbgroup/tunnel.yaml` by default:
+Install the same binary on the client. Transfer `client.adgpack` over a private channel such as SCP. The pack contains the user's unencrypted private key. The suggested profile name is the original export directory name.
+
+```sh
+adg profile import client.adgpack
+adg groups
+adg profile import -name prod prod.adgpack
+adg profile list
+adg profile set-default prod
+adg use -p alice team-a             # select in this terminal (with shell integration)
+adg -p prod team-a devices -l       # one invocation
+adg profile update alice renewed.adgpack
+```
+
+Issuance uses configured `pki.server_names` covered by the actual HTTPS certificate and the port from `api.listen`. Without configured names it uses concrete certificate SANs. One candidate is automatic. For multiple candidates the importer offers a menu. For scripts, missing candidates or port mappings, pass `-server https://host:port` when issuing or importing. For a separate HTTPS CA, pass `-server-ca gateway-ca.pem` when issuing or repacking.
+
+```sh
+adg cert pack -config config.yaml -credentials run/clients/alice -bundle alice.adgpack
+adg profile import -f staging.yaml -name staging
+```
+
+The first profile becomes the default on a fresh installation. Later imports coexist. Renewals keep existing tunnels and their reconnects on their original credential version. A changed gateway or identity needs a separate name. Updating server CA trust requires interactive confirmation of the displayed SHA-256 fingerprints. The local store under `~/.config/adbgroup/profiles/` retains earlier credential versions for existing sessions.
+
+Existing clients continue to use `~/.config/adbgroup/tunnel.yaml` until a profile is selected as default. Explicit `-f` selects a YAML configuration and is mutually exclusive with `-p`. Example legacy client YAML:
 
 ```yaml
 server: https://adb-host.example:8443

@@ -36,7 +36,7 @@ _adbgroup_changes_selection() {
     # Command names are case-sensitive even when the shell ignores case in patterns.
     if [ "${1-}" = use ] || [ "${1-}" = unuse ]; then return 0; fi
     local _ag_cmd
-    for _ag_cmd in check serve cert groups g devices d tunnel t daemon shell-init; do
+    for _ag_cmd in check serve cert profile groups g devices d tunnel t daemon shell-init; do
         [ "${1-}" != "$_ag_cmd" ] || return 1
     done
     # Connection options take a value. The group ends option parsing, so any

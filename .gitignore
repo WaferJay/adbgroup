@@ -4,3 +4,4 @@
 /run/
 *.pem
 *.key
+*.adgpack

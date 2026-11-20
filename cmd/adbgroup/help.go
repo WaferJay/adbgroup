@@ -27,7 +27,7 @@ Select a group for this terminal (requires bash or zsh shell integration):
 Use "adg devices GROUP" to query a group or "adg devices" for the current selection.
 Use "adg tunnel GROUP" to open a tunnel. Both commands preserve the terminal selection.
 
-Put connection options (-f/-config, -s/-server, -d/-credentials, -cert,
+Put connection options (-p/-profile, -f/-config, -s/-server, -d/-credentials, -cert,
 -key, -ca) before the group. Use @GROUP for a group named like an adg
 command or alias. Use @@name for a group named @name.
 Arguments after the group run adb once, independently of
@@ -38,7 +38,8 @@ options -H, -P, and -L conflict.
 Commands:
   check          Validate the server configuration
   serve          Start the ADB gateway server
-  cert           Issue client credentials
+  cert           Issue client credentials and a portable .adgpack
+  profile        Import credentials and select a default client profile
   tunnel (t)     Start or manage local ADB tunnels
   groups (g)     List authorized groups
   devices (d)    List devices and lock status in a group
@@ -58,11 +59,17 @@ var commandHelp = map[string]struct {
 	syntax      string
 	description string
 }{
-	"check":   {"check [options]", "Validate the server configuration without starting the gateway."},
-	"serve":   {"serve [options]", "Start the HTTPS API and ADB gateway server."},
-	"cert":    {"cert [options] -user <name> -out <directory>", "Issue client credentials. Use -identity instead of -user for an explicit identity URI."},
-	"groups":  {"groups [options]", "List authorized groups. A leading * marks the current group. Alias: g."},
-	"devices": {"devices [GROUP] [options]", "List devices and lock status in a group. Alias: d.\nExample: adg devices @team-a --json. Without GROUP, query the current terminal selection. With explicit connection options, GROUP is required."},
+	"check":               {"check [options]", "Validate the server configuration without starting the gateway."},
+	"serve":               {"serve [options]", "Start the HTTPS API and ADB gateway server."},
+	"cert":                {"cert [options] -user <name> -out <directory>", "Issue PEM files and client.adgpack. Use adg cert pack to package an existing export. Use -identity instead of -user for an explicit identity URI."},
+	"cert pack":           {"cert pack -config FILE -credentials DIR -bundle FILE [options]", "Package existing client credentials."},
+	"profile":             {"profile <import|list|set-default|update>", "Manage local client connection profiles."},
+	"profile list":        {"profile list", "Show installed profiles and the default and terminal selections."},
+	"profile set-default": {"profile set-default NAME", "Select the default for subsequent client connections."},
+	"profile import":      {"profile import [options] PACK | adg profile import -f FILE [-name NAME]", "Install a credential pack or migrate client YAML."},
+	"profile update":      {"profile update [options] NAME PACK", "Install renewed credentials for this gateway and identity."},
+	"groups":              {"groups [options]", "List authorized groups. A leading * marks the current group. Alias: g."},
+	"devices":             {"devices [GROUP] [options]", "List devices and lock status in a group. Alias: d.\nExample: adg devices @team-a --json. Without GROUP, query the current terminal selection. With explicit connection options, GROUP is required."},
 	"use": {"use [GROUP] [options]", `Select a group in the current terminal. Both "adg" and "adg use" open the numbered menu.
 You can also switch with "adg GROUP" or "adg @GROUP" for a reserved name.
 Export ADBGROUP_GROUP with the selected group name.

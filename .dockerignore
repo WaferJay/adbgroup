@@ -7,3 +7,4 @@ docker/clients
 docker/data
 *.pem
 *.key
+*.adgpack
