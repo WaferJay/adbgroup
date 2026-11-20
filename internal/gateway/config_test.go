@@ -1,6 +1,37 @@
 package gateway
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestConfiguredIdentityValidation(t *testing.T) {
+	for _, tc := range []struct {
+		identity string
+		managed  bool
+		wantErr  string
+	}{
+		{"urn:example:alice", true, "unsupported URN identity"},
+		{"urn:example:alice", false, "unsupported URN identity"},
+		{"UrN://example/alice", true, "unsupported URN identity"},
+		{"mailto:alice@example.org", true, "absolute URI with a host"},
+		{"mailto:alice@example.org", false, ""},
+		{"spiffe://adbgroup/alice", true, ""},
+		{"https://issuer.example/alice", true, ""},
+	} {
+		cfg := testConfig()
+		cfg.PKI.AutoTLS = tc.managed
+		cfg.Identities = map[string][]string{tc.identity: {"*"}}
+		err := cfg.Validate()
+		if tc.wantErr == "" {
+			if err != nil {
+				t.Errorf("identity %q (managed %t): %v", tc.identity, tc.managed, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), `identities["`+tc.identity+`"]`) || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("identity %q (managed %t): expected a config error containing %q, got %v", tc.identity, tc.managed, tc.wantErr, err)
+		}
+	}
+}
 
 func TestReloadRequiresRestartForPortAndGroupChanges(t *testing.T) {
 	cases := []struct {

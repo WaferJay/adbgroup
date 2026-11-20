@@ -325,7 +325,21 @@ func UserIdentity(user string) (string, error) {
 	return "spiffe://adbgroup/" + user, nil
 }
 
+// ValidateAuthorizationIdentity checks identity names shared by managed and external issuers.
+func ValidateAuthorizationIdentity(identity string) error {
+	if identity == "" {
+		return errors.New("empty identity")
+	}
+	if scheme, _, ok := strings.Cut(identity, ":"); ok && strings.EqualFold(scheme, "urn") {
+		return errors.New("unsupported URN identity (use a URI such as spiffe://adbgroup/alice)")
+	}
+	return nil
+}
+
 func IdentityURI(identity string) (*url.URL, error) {
+	if err := ValidateAuthorizationIdentity(identity); err != nil {
+		return nil, err
+	}
 	u, err := url.Parse(identity)
 	if err != nil || !u.IsAbs() || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(identity, "\r\n\t ") {
 		return nil, errors.New("identity must be an absolute URI with a host and no credentials, query or fragment")

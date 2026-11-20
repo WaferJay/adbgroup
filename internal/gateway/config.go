@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/WaferJay/adbgroup/internal/pki"
 )
 
 type Config struct {
@@ -142,8 +144,13 @@ func (c Config) Validate() error {
 		return err
 	}
 	for identity, groups := range c.Identities {
-		if identity == "" {
-			return fmt.Errorf("empty identity")
+		if c.PKI.AutoTLS {
+			_, err = pki.IdentityURI(identity)
+		} else {
+			err = pki.ValidateAuthorizationIdentity(identity)
+		}
+		if err != nil {
+			return fmt.Errorf("identities[%q]: %w", identity, err)
 		}
 		for _, g := range groups {
 			if g != "*" && !names[g] && !c.pendingAutoGroup(g) {

@@ -176,7 +176,7 @@ bin/adg cert -config config.yaml \
 
 The output directory contains `client.adgpack` plus the original `client.pem`, `client.key`, and `ca.pem`; the CA private key is never exported. An existing output directory is rejected. `-out` is relative to the command's working directory, while PKI paths are relative to the configuration file's directory. The CLI can initialize the default PKI before the first server startup without starting listeners or ADB.
 
-`-user alice` maps to `spiffe://adbgroup/alice`. Issuing a certificate does not grant access automatically. Add the identity to the configuration, then send SIGHUP:
+`-user alice` maps to `spiffe://adbgroup/alice`. Use the exact identity URI from the client certificate as the key in `identities`. The server rejects identities using the `urn:` scheme during configuration checks, startup, and reload. Issuing a certificate does not grant access automatically. Add the identity to the configuration, then send SIGHUP:
 
 ```yaml
 identities:

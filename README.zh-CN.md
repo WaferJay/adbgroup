@@ -124,7 +124,7 @@ bin/adg cert -config config.yaml \
 
 输出目录包含 `client.adgpack` 和原有的 `client.pem`、`client.key`、`ca.pem`，不会导出 CA 私钥；已有输出目录会被拒绝。`-out` 相对命令当前目录，PKI 文件路径相对配置文件目录。CLI 可在首次启动前初始化默认 PKI，不启动监听或 ADB。
 
-`-user alice` 对应 `spiffe://adbgroup/alice`。签发不会自动授予权限，把身份加入配置后发送 SIGHUP：
+`-user alice` 对应 `spiffe://adbgroup/alice`。`identities` 的键须与客户端证书中的身份 URI 完全一致。配置检查、启动和重载都会拒绝使用 `urn:` 的身份。签发不会自动授予权限，把身份加入配置后发送 SIGHUP：
 
 ```yaml
 identities:
