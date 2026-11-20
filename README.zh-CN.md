@@ -8,6 +8,26 @@ Linux USB 设备分组、统一 mTLS 身份认证、原生 ADB 访问和物理�
 原生 adb / Appium → 本地 adbgroup tunnel → mTLS HTTPS → 分组与锁 → 常驻 ADB server → USB
 ```
 
+## 安装 adg 技能
+
+将 `adg` v0.1.0-beta.4 或更高版本放入 `PATH`。如需执行原生 `adb` 命令，还需将 Android SDK Platform Tools 加入 `PATH`。[下载 adg](https://github.com/WaferJay/adbgroup/releases)
+
+**安装到 Codex CLI**，在终端中运行以下命令。
+
+```sh
+codex plugin marketplace add WaferJay/adbgroup
+codex plugin add adg@adbgroup
+```
+
+**安装到 Claude Code**，在 Claude Code 会话中运行以下命令。
+
+```text
+/plugin marketplace add WaferJay/adbgroup
+/plugin install adg@adbgroup
+```
+
+首次连接时，用 `adg profile import client.adgpack` 导入管理员提供的凭据包。开启新的智能体会话后，可以直接说「用 adg 列出我能访问的设备组」。
+
 ## 构建与服务启动
 
 需要 Go 1.26+、近期 Android Platform Tools 和 Linux USB/udev 权限。

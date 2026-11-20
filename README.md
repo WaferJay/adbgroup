@@ -8,6 +8,26 @@ Group Linux USB devices with unified mTLS authentication, native ADB access, and
 Native adb / Appium → local adbgroup tunnel → mTLS HTTPS → groups and locks → persistent ADB server → USB
 ```
 
+## Install the adg skill
+
+Install `adg` v0.1.0-beta.4 or later on your PATH. For native `adb` commands, also add Android SDK Platform Tools to your PATH. [Download adg](https://github.com/WaferJay/adbgroup/releases)
+
+**Codex CLI** — run in your terminal.
+
+```sh
+codex plugin marketplace add WaferJay/adbgroup
+codex plugin add adg@adbgroup
+```
+
+**Claude Code** — run in a Claude Code session.
+
+```text
+/plugin marketplace add WaferJay/adbgroup
+/plugin install adg@adbgroup
+```
+
+For your first connection, import the credential pack from your administrator with `adg profile import client.adgpack`. Start a new agent session and ask, “Use adg to list the device groups I can access.”
+
 ## Build and start the server
 
 Requires Go 1.26+, recent Android Platform Tools, and Linux USB/udev permissions.

@@ -1,0 +1,8 @@
+{
+  "name": "adg",
+  "version": "0.1.0",
+  "description": "List Android device groups and locks, and run adb on a device through the adg gateway.",
+  "author": {
+    "name": "WaferJay"
+  }
+}

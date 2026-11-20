@@ -1,0 +1,14 @@
+{
+  "name": "adbgroup",
+  "description": "Plugins for the ADB Group Gateway.",
+  "owner": {
+    "name": "WaferJay"
+  },
+  "plugins": [
+    {
+      "name": "adg",
+      "source": "./plugins/adg",
+      "description": "Query remote Android devices and run adb commands by group."
+    }
+  ]
+}
