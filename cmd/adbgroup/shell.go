@@ -24,14 +24,7 @@ func runShellInit(args []string, out io.Writer) error {
 
 const shellApply = `# adbgroup shell integration; safe to load repeatedly.
 adg() {
-    # Only the group-scoped built-ins participate. Go parses their options
-    # before requesting a selection, so help and explicit groups pass through.
-    if [ "${1-}" = devices ] || [ "${1-}" = d ] || [ "${1-}" = tunnel ] || [ "${1-}" = t ]; then
-        local _ag_status
-        if command adg --shell-client "$@"; then return 0; else _ag_status=$?; fi
-        [ "$_ag_status" -eq 125 ] || return "$_ag_status"
-        _adbgroup_switch --shell-select-default "$@" || return $?
-    elif _adbgroup_changes_selection "$@"; then
+    if _adbgroup_changes_selection "$@"; then
         _adbgroup_switch "$@"
         return $?
     fi
@@ -43,7 +36,7 @@ _adbgroup_changes_selection() {
     # Command names are case-sensitive even when the shell ignores case in patterns.
     if [ "${1-}" = use ] || [ "${1-}" = unuse ]; then return 0; fi
     local _ag_cmd
-    for _ag_cmd in check serve cert groups g daemon shell-init; do
+    for _ag_cmd in check serve cert groups g devices d tunnel t daemon shell-init; do
         [ "${1-}" != "$_ag_cmd" ] || return 1
     done
     # Connection options take a value. The group ends option parsing, so any

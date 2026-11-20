@@ -108,13 +108,16 @@ func TestInventoryCommandsLoadDefaultClientConfig(t *testing.T) {
 	}
 	// An invalid HTTPS origin must be rejected before reading credentials or
 	// making requests, proving these commands used the default client config.
-	if err = os.WriteFile(path, []byte("server: http://invalid.example\ngroup: team-a\n"), 0600); err != nil {
+	if err = os.WriteFile(path, []byte("server: http://invalid.example\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	previous := os.Args
 	defer func() { os.Args = previous }()
 	for _, command := range []string{"groups", "g", "devices", "d"} {
 		os.Args = []string{"adg", command, "--json"}
+		if command == "devices" || command == "d" {
+			os.Args = append(os.Args, "team-a")
+		}
 		if err = run(); err == nil || err.Error() != "server must be an HTTPS origin" {
 			t.Errorf("%s did not use client config and query flags: %v", command, err)
 		}

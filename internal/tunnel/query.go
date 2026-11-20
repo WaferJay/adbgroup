@@ -15,14 +15,12 @@ func (c *Client) ListGroups(ctx context.Context) ([]gateway.Group, error) {
 }
 
 // ListDevices lists a group's inventory without creating a tunnel or listener.
-// An empty group is resolved automatically when exactly one group is authorized.
 func (c *Client) ListDevices(ctx context.Context, group string) ([]gateway.Device, error) {
-	group, err := c.resolveGroup(ctx, group)
-	if err != nil {
-		return nil, err
+	if group == "" {
+		return nil, errGroupRequired
 	}
 	var devices []gateway.Device
-	err = c.request(ctx, "GET", "/v1/groups/"+url.PathEscape(group)+"/devices", nil, &devices)
+	err := c.request(ctx, "GET", "/v1/groups/"+url.PathEscape(group)+"/devices", nil, &devices)
 	return devices, err
 }
 

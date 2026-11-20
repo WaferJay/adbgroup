@@ -82,7 +82,7 @@ func TestGroupADBCLI(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 	configPath := filepath.Join(clientDir, "tunnel.yaml")
-	if err := os.WriteFile(configPath, []byte("server: "+server.URL+"\ngroup: devices\n"), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte("server: "+server.URL+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 

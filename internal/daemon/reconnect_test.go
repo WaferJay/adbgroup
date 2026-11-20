@@ -138,9 +138,7 @@ func TestManagedTunnelServerRestartRetainsPortAndIdentity(t *testing.T) {
 	s := newRestartServer(t)
 	m := NewManager()
 	defer m.Close()
-	// Resolve the group once; reconnection must keep the resolved group.
 	cfg := s.config
-	cfg.Group = ""
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -151,8 +149,13 @@ func TestManagedTunnelServerRestartRetainsPortAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	missing := cfg
+	missing.Group = ""
+	if _, err := m.Start(testContext(t), missing); err == nil || err.Error() != "group required" {
+		t.Fatalf("missing group on existing listener: %v", err)
+	}
 	if reused, err := m.Start(testContext(t), cfg); err != nil || reused.ID != first.ID {
-		t.Fatalf("inferred group reuse: %+v %v", reused, err)
+		t.Fatalf("explicit group reuse: %+v %v", reused, err)
 	}
 	stream := localADB(t, first.Listen)
 	expectStatus(t, stream, "host:transport:A", "OKAY")

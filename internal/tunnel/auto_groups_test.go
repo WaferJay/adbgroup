@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,9 +29,6 @@ func TestMTLSAutoGroupTunnelAndWildcardRevocation(t *testing.T) {
 	groups, err := h.client.ListGroups(h.server.ctx)
 	if err != nil || len(groups) != 7 { // a, found, everything, A, B, 9A/B, model-Pixel_8
 		t.Fatalf("wildcard groups = %+v, %v", groups, err)
-	}
-	if _, err := h.client.resolveGroup(h.server.ctx, ""); err == nil || !strings.Contains(err.Error(), "multiple groups authorized") {
-		t.Fatalf("wildcard ambiguities were not rejected: %v", err)
 	}
 	var resource Resource
 	if err := h.client.request(h.server.ctx, "POST", "/v1/groups/missing/tunnels", map[string]string{}, &resource); err == nil {

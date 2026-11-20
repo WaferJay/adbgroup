@@ -20,9 +20,12 @@ func TestInventoryQueriesAuthorizeAndDoNotCreateTunnels(t *testing.T) {
 	if err != nil || len(groups) != 1 || groups[0].Name != "a" {
 		t.Fatalf("authorized groups = %+v, %v", groups, err)
 	}
-	devices, err := h.client.ListDevices(h.server.ctx, "")
+	if _, err := h.client.ListDevices(h.server.ctx, ""); err != errGroupRequired {
+		t.Fatalf("missing group: %v", err)
+	}
+	devices, err := h.client.ListDevices(h.server.ctx, "a")
 	if err != nil || len(devices) != 2 || devices[0].Serial != "A" || devices[0].State != "device" || devices[1].Serial != "B" || devices[1].State != "disconnected" {
-		t.Fatalf("default group devices = %+v, %v", devices, err)
+		t.Fatalf("group a devices = %+v, %v", devices, err)
 	}
 	if _, err = h.client.ListDevices(h.server.ctx, "hidden"); err == nil || !strings.Contains(err.Error(), "404") {
 		t.Fatalf("unauthorized group not rejected: %v", err)
@@ -45,7 +48,7 @@ func TestInventoryQueriesRequireExplicitGroupWhenAmbiguous(t *testing.T) {
 	cfg.Groups = append(cfg.Groups, gateway.Group{Name: "b", Devices: []string{}})
 	cfg.Identities = map[string][]string{"spiffe://adbgroup/alice": {"a", "b"}}
 	h.engine.Reload(cfg)
-	if _, err := h.client.ListDevices(h.server.ctx, ""); err == nil || !strings.Contains(err.Error(), "multiple groups authorized (a, b)") {
+	if _, err := h.client.ListDevices(h.server.ctx, ""); err != errGroupRequired {
 		t.Fatalf("ambiguous group not rejected: %v", err)
 	}
 	devices, err := h.client.ListDevices(h.server.ctx, "b")

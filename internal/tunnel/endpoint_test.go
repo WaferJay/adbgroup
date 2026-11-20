@@ -66,7 +66,7 @@ func TestEndpointReconnectClearsRulesAndStopDuringBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() { cancel(); endpoint.Close(); <-done }()
 	go func() {
-		done <- endpoint.Run(ctx, "", func(group, address string) { ready <- group + " " + address }, func(string, error) {})
+		done <- endpoint.Run(ctx, "a", func(group, address string) { ready <- group + " " + address }, func(string, error) {})
 	}()
 	select {
 	case resolved := <-ready:

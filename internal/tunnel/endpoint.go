@@ -95,7 +95,7 @@ func (e *Endpoint) Run(ctx context.Context, group string, ready func(string, str
 		attemptCtx, cancel := context.WithCancel(ctx)
 		timer := time.AfterFunc(30*time.Second, cancel)
 		var activeSince time.Time
-		err = c.runSession(attemptCtx, group, "", func(resolved string) error {
+		err = c.runSession(attemptCtx, group, "", func() error {
 			if !timer.Stop() || attemptCtx.Err() != nil {
 				return context.DeadlineExceeded
 			}
@@ -117,7 +117,6 @@ func (e *Endpoint) Run(ctx context.Context, group string, ready func(string, str
 			e.client = c
 			address := e.address
 			e.mu.Unlock()
-			group = resolved
 			established = true
 			activeSince = time.Now()
 			ready(group, address)

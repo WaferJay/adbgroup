@@ -167,11 +167,11 @@ func TestShellSwitchWithMTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	clientConfig := fmt.Sprintf("server: %q\ncredentials: %q\n", s.URL, creds)
-	if err := os.WriteFile(defaultConfig, []byte(clientConfig+"group: DEVICES\n"), 0600); err != nil {
+	if err := os.WriteFile(defaultConfig, []byte(clientConfig), 0600); err != nil {
 		t.Fatal(err)
 	}
 	testConfig := filepath.Join(home, "client profile.yaml")
-	if err := os.WriteFile(testConfig, []byte(clientConfig+"group: devices\n"), 0600); err != nil {
+	if err := os.WriteFile(testConfig, []byte(clientConfig), 0600); err != nil {
 		t.Fatal(err)
 	}
 	const adb = `#!/bin/sh
@@ -199,12 +199,19 @@ exit 37
 		}
 	}()
 	t.Run("inventory without shell integration", func(t *testing.T) {
-		cmd := exec.Command(executable, "devices", "--json")
+		for _, args := range [][]string{{"devices"}, {"t"}, {"t", "--no-daemon"}, {"t", "-w", "lease"}, {"--shell-client", "d"}, {"--shell-client", "t"}} {
+			cmd := exec.Command(executable, args...)
+			cmd.Env = append(env, "ADBGROUP_CONTEXT=", shellStateFile+"=")
+			if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "group required") {
+				t.Fatalf("missing group %v: %v %s", args, err, out)
+			}
+		}
+		cmd := exec.Command(executable, "devices", "DEVICES", "--json")
 		cmd.Env = append(env, "ADBGROUP_CONTEXT=", shellStateFile+"=")
 		out, err := cmd.Output()
 		var devices []gateway.Device
 		if err != nil || json.Unmarshal(out, &devices) != nil || len(devices) != 1 || devices[0].Serial != "DEVICES" {
-			t.Fatalf("default group inventory: %v %s", err, out)
+			t.Fatalf("explicit group inventory: %v %s", err, out)
 		}
 		cmd = exec.Command(executable, "daemon", "status")
 		cmd.Env = env
@@ -243,8 +250,11 @@ if adg devices -f "$TEST_CONFIG.missing" >/dev/null 2>&1; then exit 16; fi
 [ "${ADBGROUP_GROUP+x}" != x ]
 [ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
 [ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
-adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
+if adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT" 2>&1; then exit 21; fi
+grep -q "group required" "$TEST_OUTPUT"
+adg d @devices -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
 grep -q DEVICE_B "$TEST_OUTPUT"
+adg use @devices -f "$TEST_CONFIG"
 [ "$ADBGROUP_GROUP" = devices ]
 inventory_socket=$ADB_SERVER_SOCKET
 adg unuse
@@ -253,13 +263,18 @@ EXPECTED_ADB_SOCKET="$inventory_socket" adg @devices devices -l || adb_status=$?
 [ "$adb_status" = 37 ]
 [ "${ADBGROUP_CONTEXT+x}" != x ]
 [ "${ADBGROUP_GROUP+x}" != x ]
+if adg d --json > "$TEST_OUTPUT" 2>&1; then exit 22; fi
+grep -q "adg devices GROUP" "$TEST_OUTPUT"
+adg use DEVICES
 command adg devices --json > "$TEST_OUTPUT.expected"
 adg devices --json > "$TEST_OUTPUT"
 cmp "$TEST_OUTPUT.expected" "$TEST_OUTPUT"
 [ "$ADBGROUP_GROUP" = DEVICES ]
 first_socket=$ADB_SERVER_SOCKET
 first_context=$ADBGROUP_CONTEXT
-adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
+if adg d -f "$TEST_CONFIG" --json > "$TEST_OUTPUT" 2>&1; then exit 21; fi
+grep -q "group required" "$TEST_OUTPUT"
+adg d @devices -f "$TEST_CONFIG" --json > "$TEST_OUTPUT"
 grep -q DEVICE_B "$TEST_OUTPUT"
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 adg -f "$TEST_CONFIG" DEVICES
@@ -300,7 +315,12 @@ if adg use DEVICES -s http://invalid.example; then exit 14; fi
 adg -f="$TEST_CONFIG" --group=devices
 [ "$ADBGROUP_CONTEXT" = "$second_context" ]
 adg use @DEVICES -s "$TEST_SERVER" -d "$TEST_CREDS"
-command adg t -s "$TEST_SERVER" -d "$TEST_CREDS" -g DEVICES -l "${first_socket#tcp:}"
+if adg t -l "${first_socket#tcp:}" > "$TEST_OUTPUT" 2>&1; then exit 18; fi
+grep -q "adg tunnel GROUP" "$TEST_OUTPUT"
+if adg t @devices -l "${first_socket#tcp:}" > "$TEST_OUTPUT" 2>&1; then exit 23; fi
+grep -q "different configuration" "$TEST_OUTPUT"
+adg t -s "$TEST_SERVER" -d "$TEST_CREDS" -g devices -l "${second_socket#tcp:}"
+[ "$ADB_SERVER_SOCKET" = "$first_socket" ]
 [ "$ADBGROUP_GROUP" = DEVICES ]
 [ "$ADBGROUP_CONTEXT" = "$first_context" ]
 adg unuse
@@ -308,14 +328,11 @@ adg unuse
 [ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
 [ "${ADBGROUP_CONTEXT+x}" != x ]
 [ "${ADBGROUP_GROUP+x}" != x ]
-# The requested listener is owned by another group. Selection happened first.
-if adg t -l "${second_socket#tcp:}" > "$TEST_OUTPUT" 2>&1; then exit 18; fi
-[ "$ADBGROUP_CONTEXT" = "$first_context" ]
-adg unuse
-adg t -l "${first_socket#tcp:}" > "$TEST_OUTPUT"
+if adg t DEVICES -l "${second_socket#tcp:}" > "$TEST_OUTPUT" 2>&1; then exit 24; fi
+grep -q "different configuration" "$TEST_OUTPUT"
+adg t DEVICES -l "${first_socket#tcp:}" > "$TEST_OUTPUT"
 grep -Fq "group=DEVICES listen=${first_socket#tcp:}" "$TEST_OUTPUT"
-[ "$ADBGROUP_CONTEXT" = "$first_context" ]
-adg unuse
+[ "${ADBGROUP_CONTEXT+x}" != x ]
 [ "${ADB_SERVER_SOCKET+x}" = "$original_set" ]
 [ "${ADB_SERVER_SOCKET-}" = "$original_value" ]
 adg unuse

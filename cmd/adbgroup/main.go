@@ -58,9 +58,6 @@ func load(path string) (gateway.Config, error) {
 }
 func main() {
 	if err := run(); err != nil && !errors.Is(err, flag.ErrHelp) {
-		if err == errShellNeedsDefault {
-			os.Exit(125) // Private handshake with the shell-init wrapper.
-		}
 		slog.Error("adg stopped", "error", err)
 		os.Exit(1)
 	}
@@ -76,7 +73,6 @@ type tunnelOptions struct {
 
 type tunnelFile struct {
 	Server      string `yaml:"server"`
-	Group       string `yaml:"group"`
 	Listen      string `yaml:"listen"`
 	Credentials string `yaml:"credentials"`
 	Certificate string `yaml:"cert"`
@@ -105,6 +101,9 @@ func loadTunnelFile(path string) (tunnelFile, bool, error) {
 	d := yaml.NewDecoder(f)
 	d.KnownFields(true)
 	if err = d.Decode(&c); err != nil {
+		if strings.Contains(err.Error(), "field group not found in type ") {
+			return c, true, fmt.Errorf("remove the top-level group: field and specify the group on the command line: %w", err)
+		}
 		return c, true, err
 	}
 	var extra any
@@ -142,9 +141,6 @@ func (o *tunnelOptions) applyFile(c tunnelFile, flags *flag.FlagSet) {
 	credentialsSet := flagWasSet(flags, "credentials", "d")
 	if c.Server != "" && !flagWasSet(flags, "server", "s") {
 		o.server = c.Server
-	}
-	if c.Group != "" && !flagWasSet(flags, "group", "g") {
-		o.group = c.Group
 	}
 	if c.Listen != "" && !flagWasSet(flags, "listen", "l") {
 		o.listen = c.Listen
@@ -224,13 +220,8 @@ func canonicalCommand(command string) string {
 	return command
 }
 
-var errShellNeedsDefault = errors.New("shell must select the configured group")
-
-func runClientCommand(command string, args []string, shellMode string) error {
+func runClientCommand(command string, args []string) error {
 	if command == "tunnel" && len(args) > 0 && (args[0] == "list" || args[0] == "stop") {
-		if shellMode == "--shell-select-default" {
-			return nil
-		}
 		return runTunnelCommand(args, os.Stdout)
 	}
 	flags := newCommandFlags(command)
@@ -255,28 +246,24 @@ func runClientCommand(command string, args []string, shellMode string) error {
 	if err := o.loadConfig(*file, flags); err != nil {
 		return err
 	}
-	if shellMode != "" {
-		needsDefault := o.group != "" && !flagWasSet(flags, "g", "group") && currentSelection() == nil
-		if shellMode == "--shell-select-default" {
-			if !needsDefault {
-				return nil
-			}
-			if err := requireShell(); err != nil {
-				return err
-			}
-			return o.activateTerminalGroup(o.group, io.Discard)
-		}
-		if needsDefault {
-			return errShellNeedsDefault
-		}
-	}
 	var currentGroup string
 	if command != "tunnel" {
 		if active := applySelection(o, flags); active != nil {
 			currentGroup = active.Config.Group
 		}
-	} else if !noDaemon {
-		return startManagedTunnel(o, os.Stdout)
+		if command == "devices" && o.group == "" {
+			if connectionFlagsSet(flags) {
+				return errors.New("group required with connection options: run adg devices GROUP")
+			}
+			return errors.New("group required: run adg devices GROUP or select a group with adg use GROUP")
+		}
+	} else {
+		if o.group == "" {
+			return errors.New("group required: run adg tunnel GROUP")
+		}
+		if !noDaemon {
+			return startManagedTunnel(o, os.Stdout)
+		}
 	}
 	cert, key, ca := o.credentialFiles()
 	client, err := tunnel.NewClient(o.server, cert, key, ca)
@@ -303,8 +290,8 @@ func run() error {
 		return flag.ErrHelp
 	case "check", "serve", "cert":
 	case "devices", "groups", "tunnel":
-		return runClientCommand(command, os.Args[2:], "")
-	case "--shell-client", "--shell-select-default":
+		return runClientCommand(command, os.Args[2:])
+	case "--shell-client": // Shell functions loaded before upgrading forward queries and tunnels here.
 		if len(os.Args) < 3 {
 			return errors.New("devices or tunnel command required")
 		}
@@ -312,7 +299,7 @@ func run() error {
 		if clientCommand != "devices" && clientCommand != "tunnel" {
 			return errors.New("devices or tunnel command required")
 		}
-		return runClientCommand(clientCommand, os.Args[3:], command)
+		return runClientCommand(clientCommand, os.Args[3:])
 	case "daemon":
 		return runDaemonCommand(os.Args[2:], os.Stdout)
 	case "shell-init":

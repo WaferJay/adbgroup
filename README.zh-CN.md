@@ -177,10 +177,11 @@ identities 中的完整条目 `"*"` 授权所有现有及未来分组，包括�
 
 ```yaml
 server: https://adb-host.example:8443
-group: team-a
 # 可省略；省略时默认为 tunnel.yaml 所在目录
 credentials: /path/to/run/clients/alice
 ```
+
+升级时，请删除已有客户端 YAML 中的顶层 `group:` 字段。可以在命令行上传入组名，或用 `adg use GROUP` 选择后续设备查询使用的组。
 
 `credentials` 目录中的文件名使用 `cert` 命令的固定输出 `client.pem`、`client.key`、`ca.pem`。也可以把这三个文件直接放在 `tunnel.yaml` 旁边并省略 `credentials`。
 
@@ -197,14 +198,14 @@ adg @devices devices -l                   # 设备组本身名为 devices
 
 客户端连接参数写在组名前。例如，组名前的 `-s` 指定网关服务端，组名后的 `-s` 指定 adb 设备序列号。首个参数优先匹配内置命令及别名。组名前可以加 `@`，遇到重名时用它显式选组。脚本中可写 `adg "@$group" devices -l`，变量值即使是命令或别名也会按组名处理。组名本身以 `@` 开头时再加一个 `@`，例如 `@@lab` 表示名为 `@lab` 的组。已有脚本仍可使用 `-g GROUP` 或 `-group GROUP`。
 
-daemon 按服务端、凭据和组名复用普通隧道，首次创建时自动分配本地回环端口。单次调用使用自己的客户端配置和组名，即使终端已选中其他网关或组也是如此。原生 adb 接收原始参数、标准输入、标准输出和标准错误，退出码直接传回调用方。隧道已指定 ADB 服务端地址，与原生 adb 的服务端选项 `-H`、`-P`、`-L` 冲突。如需写租约，请使用 `adg t -w <lease-id>`。
+daemon 按服务端、凭据和组名复用普通隧道，首次创建时自动分配本地回环端口。单次调用使用自己的客户端配置和组名，即使终端已选中其他网关或组也是如此。原生 adb 接收原始参数、标准输入、标准输出和标准错误，退出码直接传回调用方。隧道已指定 ADB 服务端地址，与原生 adb 的服务端选项 `-H`、`-P`、`-L` 冲突。如需写租约，请使用 `adg t GROUP -w <lease-id>`。
 
 ### 启动本地隧道
 
 要为 adb 或 Appium 等 ADB 客户端启动隧道，可运行以下命令。
 
 ```sh
-adg t
+adg t team-a
 ```
 
 `t` 默认自动启动当前用户的后台 daemon，将 tunnel 交给它管理，等本地监听就绪后返回。关闭终端后 tunnel 继续运行。同一 daemon 可以管理多个服务端或分组的 tunnel，每条 tunnel 需要使用不同的本地监听端口：
@@ -221,7 +222,7 @@ adg daemon status
 adg daemon start      # 可选；t 命令会自动启动
 adg daemon stop       # 等待全部 tunnel 清理后退出
 
-adg t --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
+adg t team-a --no-daemon      # 在当前终端前台运行，Ctrl-C 退出
 ```
 
 启动成功会输出 tunnel ID 和 `export ADB_SERVER_SOCKET=tcp:127.0.0.1:端口`。在使用 adb/Appium 的终端设置对应的环境变量即可选择 tunnel。重复提交相同参数会复用已有 tunnel；同一监听地址使用不同配置会报冲突，需要先停止旧 tunnel。
@@ -236,10 +237,11 @@ eval "$(command adg shell-init zsh)"
 
 bash 使用 `eval "$(command adg shell-init bash)"`，将它加入终端会加载的启动文件（通常为 `~/.bashrc`；登录 shell 需由 `~/.bash_profile` 加载该文件）。初始化不会自动修改这些文件，可以重复执行。
 
-启用 shell 集成后，如果当前终端还没选组，第一次查询设备（`adg devices` 或 `adg d`）或创建隧道（`adg tunnel` 或 `adg t`）时省略组名，命令会先选中客户端配置里的 `group:`，再继续执行。例如，配置了 `group: team-a` 就相当于先执行 `adg use team-a`。使用 `-f` 时，默认组取自指定的配置文件。终端已有选组时不会再次自动切组。
+`adg devices` 查询当前终端选中的组。尚未选组或显式指定 `-f` 等连接参数时，请使用 `adg devices GROUP`。创建隧道始终需要显式指定组名。
 
 ```sh
-adg devices --json     # 选中配置里的 team-a，输出该组的网关库存
+adg use team-a         # 将当前终端切换到 team-a
+adg devices --json     # 输出当前组的网关库存
 adb devices -l         # 列出 team-a 的设备
 adg team-b devices -l  # 临时查看 team-b 的设备
 echo "$ADBGROUP_GROUP" # 仍是 team-a
@@ -253,28 +255,28 @@ adg unuse              # 恢复首次 use 前的 ADB_SERVER_SOCKET，保留 tunn
 adg use team-a -s https://adb-host.example:8443 -d run/clients/alice
 ```
 
-`adg g`、帮助命令、`adg t list` 和 `adg t stop` 都不会触发选组。查询设备或创建隧道时显式传入组名，只指定本次命令的目标。新终端中，如果配置文件省略了 `group:`，本次命令可自动使用唯一授权组；有多个授权组时需指定组名。
+设备查询和隧道创建都会保留当前终端的选组状态。
 
-`use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时依次优先 active、starting、reconnecting、failed；同状态按 tunnel ID 选择。对 reconnecting tunnel 会等待恢复，不创建新监听；取消等待不会停止后台重连。failed tunnel 需显式重试。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t -w`。
+`use` 按服务端、凭据路径和组复用普通 tunnel，也可复用 `t` 创建的匹配 tunnel；没有匹配项时由操作系统自动分配本地回环端口，不使用配置中的 `listen`。匹配多条时依次优先 active、starting、reconnecting、failed；同状态按 tunnel ID 选择。对 reconnecting tunnel 会等待恢复，不创建新监听；取消等待不会停止后台重连。failed tunnel 需显式重试。切换失败或取消会保留原选择。`use` 不选择写租约；写访问继续使用 `t GROUP -w`。
 
 选择状态仅保存在当前 shell 环境，不修改 `tunnel.yaml`。随后从该终端启动的 adb/Appium 会继承 socket，已启动的进程不受影响。显式提供配置文件、服务端或凭据参数时，按原客户端配置规则解析，不套用当前选择。手动修改 `ADB_SERVER_SOCKET` 后，与其不匹配的选择上下文会被忽略。
 
 `ADBGROUP_GROUP` 保存当前终端选中的组名，方便 shell 提示符和脚本使用。切换失败或取消时保留原值，`adg unuse` 时清除。升级后，在已打开的终端重新执行 shell 初始化命令，即可使用切组简写。
 
-在尚未启用集成的终端中，`adg devices` 和 `adg t` 只为本次调用使用配置的组。`adg team-a` 和 `adg unuse` 会提示初始化方法。要直接运行一次 adb，可在组名后追加参数，例如 `adg team-a devices -l`。
+在尚未启用集成的终端中，`adg team-a` 和 `adg unuse` 会提示初始化方法。要直接运行一次 adb，可在组名后追加参数，例如 `adg team-a devices -l`。
 
 升级到 daemon 控制协议 v3 前，请用旧版本 `adg` 执行 `adg daemon stop`。升级后，用新版本重新提交 tunnel。
 
 普通托管 tunnel 首次连接成功后，server 重启或网络断开会使其进入 `reconnecting`。daemon 保留原本地端口、分组和本地 tunnel ID，重新读取凭据并建立新的认证会话。不可用期间新 ADB 请求立即返回 `FAIL`，已有连接结束；恢复后后续命令通过原 socket 即可访问，无需再次 `use`。forward/reverse 规则需要重新创建，ADB 命令不会重放。
 
-重连采用从 1 秒增长至 30 秒的指数退避，带 ±20% 抖动；持续在线 30 秒后重置，每轮连接限时 30 秒。网络故障、HTTP 5xx/429/408 和暂时缺失的分组（404）会继续重试。证书、信任校验、协议或明确身份拒绝会停止自动重试并显示 `failed`，本地端口仍保留至停止 tunnel；修复后重复 `use` 或 `t` 可显式重试。首次连接失败、前台 `t --no-daemon` 和 `t -w` 写租约隧道仍需显式重试。daemon 不持久化 tunnel 配置，daemon 自身重启后需重新提交。
+重连采用从 1 秒增长至 30 秒的指数退避，带 ±20% 抖动；持续在线 30 秒后重置，每轮连接限时 30 秒。网络故障、HTTP 5xx/429/408 和暂时缺失的分组（404）会继续重试。证书、信任校验、协议或明确身份拒绝会停止自动重试并显示 `failed`，本地端口仍保留至停止 tunnel；修复后重复 `use` 或 `t` 可显式重试。首次连接失败、前台 `t GROUP --no-daemon` 和 `t GROUP -w` 写租约隧道仍需显式重试。daemon 不持久化 tunnel 配置，daemon 自身重启后需重新提交。
 
 daemon 支持 macOS/Linux，控制 socket 位于 `~/.config/adbgroup/daemon/control.sock`，目录权限为 `0700`，socket 权限为 `0600`；日志写入同目录的 `daemon.log`。本地控制协议版本不兼容时会报错，应先使用旧版本命令停止 daemon，再使用新版本启动。首版不安装系统服务或配置开机自启。
 
 不使用配置文件时，远程连接也可以简写为：
 
 ```sh
-adg t -s https://adb-host.example:8443 -d run/clients/alice
+adg t -s https://adb-host.example:8443 -d run/clients/alice team-a
 
 # 另一终端
 export ADB_SERVER_SOCKET=tcp:127.0.0.1:15037
@@ -284,7 +286,7 @@ adb -s USB_SERIAL_A push app.apk /data/local/tmp/
 adb -s USB_SERIAL_A install app.apk
 ```
 
-`t` 是 `tunnel` 的短名，`-s/-l/-d/-w/-f` 分别是 `-server/-listen/-credentials/-lease/-config`。命令行参数优先于配置文件。没有默认配置文件时，内置默认服务为 `https://127.0.0.1:8443`，默认凭据目录为当前目录，默认本地监听为 `127.0.0.1:15037`。未配置分组且证书身份只授权一个组时会自动选择；有多个授权组时可写 `adg t team-a` 指定组名。单独的 `-cert`、`-key`、`-ca` 参数可覆盖凭据目录默认值。
+`t` 是 `tunnel` 的短名，`-s/-l/-d/-w/-f` 分别是 `-server/-listen/-credentials/-lease/-config`。命令行参数优先于配置文件。没有默认配置文件时，内置默认服务为 `https://127.0.0.1:8443`，默认凭据目录为当前目录，默认本地监听为 `127.0.0.1:15037`。单独的 `-cert`、`-key`、`-ca` 参数可覆盖凭据目录默认值。
 
 `-l 15038` 等价于 `-l 127.0.0.1:15038`，配置文件同样支持 `listen: 15038`；完整 IPv4/IPv6 数值回环地址也可继续使用。
 

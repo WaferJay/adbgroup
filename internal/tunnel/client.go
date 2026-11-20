@@ -135,26 +135,7 @@ func localAddress(address string) (string, error) {
 // LocalAddress validates and canonicalizes a local ADB listener address.
 func LocalAddress(address string) (string, error) { return localAddress(address) }
 
-func (c *Client) resolveGroup(ctx context.Context, group string) (string, error) {
-	if group != "" {
-		return group, nil
-	}
-	groups, err := c.ListGroups(ctx)
-	if err != nil {
-		return "", fmt.Errorf("discover groups: %w", err)
-	}
-	if len(groups) == 0 {
-		return "", errors.New("client identity has no authorized groups")
-	}
-	if len(groups) == 1 {
-		return groups[0].Name, nil
-	}
-	names := make([]string, len(groups))
-	for i, group := range groups {
-		names[i] = group.Name
-	}
-	return "", fmt.Errorf("multiple groups authorized (%s); specify a group as @GROUP", strings.Join(names, ", "))
-}
+var errGroupRequired = errors.New("group required")
 
 // Run owns the local ADB listener and every associated data socket. It never
 // reconnects or replays commands after the authenticated control channel fails.
@@ -184,7 +165,7 @@ func (c *Client) runReady(parent context.Context, group, lease, address string, 
 			listener.Close()
 		}
 	}()
-	return c.runSession(parent, group, lease, func(group string) error {
+	return c.runSession(parent, group, lease, func() error {
 		var err error
 		listener, err = c.listen("tcp", address)
 		if err != nil {
@@ -214,20 +195,17 @@ func (c *Client) runReady(parent context.Context, group, lease, address string, 
 }
 
 // runSession owns a single remote session, independently of the ADB listener.
-func (c *Client) runSession(parent context.Context, group, lease string, readyFunc func(string) error, disconnected func()) error {
+func (c *Client) runSession(parent context.Context, group, lease string, readyFunc func() error, disconnected func()) error {
 	defer c.http.CloseIdleConnections()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	c.ctx = ctx
-	setup, stop := context.WithTimeout(ctx, setupTimeout)
-	group, err := c.resolveGroup(setup, group)
-	stop()
-	if err != nil {
-		return err
+	if group == "" {
+		return errGroupRequired
 	}
 	var resource Resource
-	setup, stop = context.WithTimeout(ctx, setupTimeout)
-	err = c.request(setup, "POST", "/v1/groups/"+url.PathEscape(group)+"/tunnels", map[string]string{"lease_id": lease}, &resource)
+	setup, stop := context.WithTimeout(ctx, setupTimeout)
+	err := c.request(setup, "POST", "/v1/groups/"+url.PathEscape(group)+"/tunnels", map[string]string{"lease_id": lease}, &resource)
 	stop()
 	if err != nil {
 		return err
@@ -264,7 +242,7 @@ func (c *Client) runSession(parent context.Context, group, lease string, readyFu
 		return permanentError{errors.New("incompatible tunnel protocol")}
 	}
 	go func() { <-ctx.Done(); control.CloseNow(); c.shutdown() }()
-	if err := readyFunc(group); err != nil {
+	if err := readyFunc(); err != nil {
 		return err
 	}
 	slots := make(chan struct{}, 64)

@@ -30,6 +30,9 @@ type Config struct {
 }
 
 func (c *Config) Normalize() error {
+	if c.Group == "" {
+		return errors.New("group required")
+	}
 	u, err := url.Parse(c.Server)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" {
 		return errors.New("server must be an HTTPS origin")
@@ -99,11 +102,7 @@ func (m *Manager) Start(ctx context.Context, cfg Config) (Tunnel, error) {
 		if existing.config.Listen != cfg.Listen {
 			continue
 		}
-		candidate := cfg
-		if candidate.Group == "" {
-			candidate.Group = existing.info.Group
-		}
-		if existing.config != candidate {
+		if existing.config != cfg {
 			m.mu.Unlock()
 			return Tunnel{}, fmt.Errorf("listener %s already belongs to tunnel %s with different configuration", cfg.Listen, existing.info.ID)
 		}
@@ -143,7 +142,6 @@ func (m *Manager) Ensure(ctx context.Context, cfg Config) (Tunnel, error) {
 	for _, e := range m.entries {
 		candidate := e.config
 		candidate.Listen = ""
-		candidate.Group = e.info.Group
 		r, ok := rank[e.info.State]
 		if candidate != cfg || !ok {
 			continue
@@ -168,9 +166,6 @@ func (m *Manager) startLocked(cfg Config, previous *entry) *entry {
 	id := fmt.Sprintf("%x", randomID())
 	if previous != nil {
 		id = previous.info.ID
-		if cfg.Group == "" {
-			cfg.Group = previous.info.Group
-		}
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	e := &entry{config: cfg, info: Tunnel{ID: id, Server: cfg.Server, Group: cfg.Group, Listen: cfg.Listen, State: "starting"}, cancel: cancel, changed: make(chan struct{}), done: make(chan struct{})}
